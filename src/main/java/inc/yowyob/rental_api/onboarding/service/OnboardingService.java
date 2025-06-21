@@ -4,15 +4,23 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import inc.yowyob.rental_api.core.enums.OnboardingStatus;
 import inc.yowyob.rental_api.core.enums.OnboardingStep;
+import inc.yowyob.rental_api.core.enums.UserStatus;
+import inc.yowyob.rental_api.core.enums.UserType;
 import inc.yowyob.rental_api.onboarding.dto.*;
 import inc.yowyob.rental_api.onboarding.entities.OnboardingSession;
 import inc.yowyob.rental_api.onboarding.repository.OnboardingSessionRepository;
+import inc.yowyob.rental_api.subscription.entities.OrganizationSubscription;
+import inc.yowyob.rental_api.subscription.entities.SubscriptionPlan;
 import inc.yowyob.rental_api.subscription.service.SubscriptionService;
+import inc.yowyob.rental_api.user.entities.User;
+import inc.yowyob.rental_api.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -25,26 +33,22 @@ public class OnboardingService {
 
     private final OnboardingSessionRepository onboardingSessionRepository;
     private final SubscriptionService subscriptionService;
+    private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
 
     /**
-     * Crée une nouvelle session d'onboarding
+     * Crée une nouvelle session d'onboarding pour un futur propriétaire
+     * Note: L'utilisateur n'existe PAS encore - nous créons juste une session
      */
-    public OnboardingSessionDto createOnboardingSession(UUID userId) {
-        log.info("Creating onboarding session for user: {}", userId);
+    public OnboardingSessionDto createOnboardingSession() {
+        log.info("Creating new onboarding session for future owner");
 
-        // Vérifier s'il y a déjà une session active
-        Optional<OnboardingSession> existingSession = onboardingSessionRepository.findActiveByUserId(userId);
-        if (existingSession.isPresent()) {
-            log.info("Found existing active onboarding session for user: {}", userId);
-            return mapToDto(existingSession.get());
-        }
-
-        // Créer une nouvelle session
-        OnboardingSession session = new OnboardingSession(userId);
+        // Créer une session sans userId car l'utilisateur n'existe pas encore
+        OnboardingSession session = new OnboardingSession();
         OnboardingSession saved = onboardingSessionRepository.save(session);
 
-        log.info("Created new onboarding session: {} for user: {}", saved.getId(), userId);
+        log.info("Created new onboarding session: {}", saved.getId());
         return mapToDto(saved);
     }
 
@@ -58,16 +62,7 @@ public class OnboardingService {
     }
 
     /**
-     * Récupère la session active d'un utilisateur
-     */
-    public Optional<OnboardingSessionDto> getActiveSessionByUserId(UUID userId) {
-        log.debug("Fetching active onboarding session for user: {}", userId);
-        return onboardingSessionRepository.findActiveByUserId(userId)
-            .map(this::mapToDto);
-    }
-
-    /**
-     * Sauvegarde les informations du propriétaire (Étape 1)
+     * Sauvegarde les informations du futur propriétaire (Étape 1)
      */
     @Transactional
     public OnboardingSessionDto saveOwnerInfo(UUID sessionId, OwnerInfoDto ownerInfo) {
@@ -75,6 +70,11 @@ public class OnboardingService {
 
         OnboardingSession session = getSessionOrThrow(sessionId);
         validateSessionActive(session);
+
+        // Vérifier que l'email n'existe pas déjà
+        if (userRepository.existsByEmail(ownerInfo.getEmail())) {
+            throw new IllegalArgumentException("Un utilisateur avec cet email existe déjà. Veuillez vous connecter ou utiliser un autre email.");
+        }
 
         try {
             String ownerInfoJson = objectMapper.writeValueAsString(ownerInfo);
@@ -120,6 +120,7 @@ public class OnboardingService {
 
     /**
      * Finalise le processus d'onboarding (Étape 3)
+     * CRÉATION EFFECTIVE DE L'UTILISATEUR OWNER ET DE L'ORGANISATION
      */
     @Transactional
     public OnboardingCompletedDto completeOnboarding(UUID sessionId, SubscriptionInfoDto subscriptionInfo) {
@@ -133,30 +134,59 @@ public class OnboardingService {
         }
 
         try {
-            // Sauvegarder les informations de souscription
-            String subscriptionInfoJson = objectMapper.writeValueAsString(subscriptionInfo);
-            session.updateSubscriptionInfo(subscriptionInfoJson);
-
             // Récupérer les données des étapes précédentes
             OwnerInfoDto ownerInfo = objectMapper.readValue(session.getOwnerInfoData(), OwnerInfoDto.class);
             OrganizationInfoDto organizationInfo = objectMapper.readValue(session.getOrganizationInfoData(), OrganizationInfoDto.class);
 
-            // TODO: Créer l'utilisateur, l'organisation et traiter le paiement
-            // Pour l'instant, nous simulons la création
-            UUID organizationId = UUID.randomUUID();
-            String organizationName = organizationInfo.getOrganizationName();
+            // Vérifier encore une fois que l'email n'existe pas
+            if (userRepository.existsByEmail(ownerInfo.getEmail())) {
+                throw new IllegalArgumentException("Un utilisateur avec cet email existe déjà");
+            }
 
-            // Créer la souscription
-            UUID subscriptionId = UUID.randomUUID(); // Simulé pour l'instant
-            String subscriptionPlan = "GRATUIT"; // Par défaut
+            // 1. CRÉER L'UTILISATEUR OWNER
+            User owner = createOwnerUser(ownerInfo);
+            log.info("Owner user created with ID: {}", owner.getId());
 
-            // Marquer la session comme terminée
+            // 2. CRÉER L'ORGANISATION (simulation pour l'instant)
+            UUID organizationId = createOrganization(organizationInfo, owner.getId());
+            log.info("Organization created with ID: {}", organizationId);
+
+            // 3. LIER L'UTILISATEUR À L'ORGANISATION
+            owner.setOrganizationId(organizationId);
+            userRepository.save(owner);
+
+            // 4. CRÉER L'ABONNEMENT
+            SubscriptionPlan plan = subscriptionService.getPlanById(subscriptionInfo.getSubscriptionPlanId())
+                .orElseThrow(() -> new IllegalArgumentException("Plan d'abonnement non trouvé"));
+
+            OrganizationSubscription subscription = subscriptionService.createSubscription(
+                organizationId,
+                subscriptionInfo.getSubscriptionPlanId(),
+                subscriptionInfo.getPaymentMethod(),
+                subscriptionInfo.getPaymentReference(),
+                plan.getPrice()
+            );
+
+            // 5. SAUVEGARDER LES INFOS DE SOUSCRIPTION
+            String subscriptionInfoJson = objectMapper.writeValueAsString(subscriptionInfo);
+            session.updateSubscriptionInfo(subscriptionInfoJson);
+
+            // 6. MARQUER LA SESSION COMME TERMINÉE
             session.complete(organizationId);
+            session.setUserId(owner.getId()); // Maintenant on peut lier l'utilisateur
             onboardingSessionRepository.save(session);
 
             log.info("Onboarding completed successfully for session: {}", sessionId);
 
-            return new OnboardingCompletedDto(organizationId, organizationName, subscriptionId, subscriptionPlan);
+            // 7. TODO: Envoyer email de bienvenue avec mot de passe temporaire
+            // sendWelcomeEmail(owner, temporaryPassword);
+
+            return new OnboardingCompletedDto(
+                organizationId,
+                organizationInfo.getOrganizationName(),
+                subscription.getId(),
+                plan.getName()
+            );
 
         } catch (JsonProcessingException e) {
             log.error("Error processing onboarding completion for session: {}", sessionId, e);
@@ -264,13 +294,101 @@ public class OnboardingService {
         return onboardingSessionRepository.findStaleInProgressSessions(cutoffTime);
     }
 
-    // Méthodes utilitaires privées
+    // ==================== MÉTHODES PRIVÉES ====================
 
+    /**
+     * Crée l'utilisateur propriétaire à partir des informations d'onboarding
+     */
+    private User createOwnerUser(OwnerInfoDto ownerInfo) {
+        log.info("Creating owner user for email: {}", ownerInfo.getEmail());
+
+        // Générer un mot de passe temporaire sécurisé
+        String temporaryPassword = generateSecureTemporaryPassword();
+
+        User owner = new User(
+            ownerInfo.getEmail(),
+            passwordEncoder.encode(temporaryPassword),
+            ownerInfo.getFirstName(),
+            ownerInfo.getLastName(),
+            UserType.OWNER
+        );
+
+        owner.setPhone(ownerInfo.getPhone());
+        owner.setAddress(ownerInfo.getAddress());
+        owner.setCity(ownerInfo.getCity());
+        owner.setCountry(ownerInfo.getCountry());
+        owner.setStatus(UserStatus.ACTIVE); // Directement actif pour les propriétaires après onboarding
+        owner.setEmailVerified(false); // Sera vérifié par email
+        owner.setPhoneVerified(false);
+
+        User savedOwner = userRepository.save(owner);
+
+        // TODO: Envoyer email avec mot de passe temporaire
+        log.info("Temporary password for {}: {} (TODO: Send via email)", ownerInfo.getEmail(), temporaryPassword);
+
+        return savedOwner;
+    }
+
+    /**
+     * Crée l'organisation (simulation pour l'instant - sera implémenté en Phase 5)
+     */
+    private UUID createOrganization(OrganizationInfoDto organizationInfo, UUID ownerId) {
+        log.info("Creating organization: {} for owner: {}", organizationInfo.getOrganizationName(), ownerId);
+
+        // TODO: Implémenter la création réelle de l'organisation en Phase 5
+        // Pour l'instant, retourner un UUID simulé
+        UUID organizationId = UUID.randomUUID();
+
+        log.info("Organization created (simulated) with ID: {} - will be implemented in Phase 5", organizationId);
+        return organizationId;
+    }
+
+    /**
+     * Génère un mot de passe temporaire sécurisé
+     */
+    private String generateSecureTemporaryPassword() {
+        String upperCase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        String lowerCase = "abcdefghijklmnopqrstuvwxyz";
+        String digits = "0123456789";
+        String specialChars = "!@#$%&*";
+        String allChars = upperCase + lowerCase + digits + specialChars;
+
+        SecureRandom random = new SecureRandom();
+        StringBuilder password = new StringBuilder(12);
+
+        // Garantir au moins un caractère de chaque type
+        password.append(upperCase.charAt(random.nextInt(upperCase.length())));
+        password.append(lowerCase.charAt(random.nextInt(lowerCase.length())));
+        password.append(digits.charAt(random.nextInt(digits.length())));
+        password.append(specialChars.charAt(random.nextInt(specialChars.length())));
+
+        // Compléter avec des caractères aléatoires
+        for (int i = 4; i < 12; i++) {
+            password.append(allChars.charAt(random.nextInt(allChars.length())));
+        }
+
+        // Mélanger les caractères
+        for (int i = 0; i < password.length(); i++) {
+            int randomIndex = random.nextInt(password.length());
+            char temp = password.charAt(i);
+            password.setCharAt(i, password.charAt(randomIndex));
+            password.setCharAt(randomIndex, temp);
+        }
+
+        return password.toString();
+    }
+
+    /**
+     * Récupère une session ou lance une exception
+     */
     private OnboardingSession getSessionOrThrow(UUID sessionId) {
         return onboardingSessionRepository.findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Onboarding session not found: " + sessionId));
     }
 
+    /**
+     * Valide qu'une session est active et utilisable
+     */
     private void validateSessionActive(OnboardingSession session) {
         if (session.isExpired()) {
             throw new IllegalStateException("Onboarding session has expired");
@@ -285,10 +403,13 @@ public class OnboardingService {
         }
     }
 
+    /**
+     * Convertit une session en DTO
+     */
     private OnboardingSessionDto mapToDto(OnboardingSession session) {
         OnboardingSessionDto dto = new OnboardingSessionDto();
         dto.setId(session.getId());
-        dto.setUserId(session.getUserId());
+        dto.setUserId(session.getUserId()); // Peut être null au début
         dto.setCurrentStep(session.getCurrentStep());
         dto.setStatus(session.getStatus());
         dto.setCreatedAt(session.getCreatedAt());

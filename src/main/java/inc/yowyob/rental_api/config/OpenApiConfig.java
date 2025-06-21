@@ -47,7 +47,15 @@ public class OpenApiConfig {
                             - Chat intégré
 
                             ## Authentification :
-                            Utilisez le token JWT dans l'en-tête Authorization: Bearer <token>
+                            1. **S'inscrire** : `POST /auth/register`
+                            2. **Se connecter** : `POST /auth/login`
+                            3. **Utiliser le token** : Authorization: Bearer <token>
+                            4. **Rafraîchir** : `POST /auth/refresh`
+
+                            ## Sécurité :
+                            - Mots de passe : minimum 8 caractères, majuscule, minuscule, chiffre
+                            - Compte verrouillé après 5 tentatives échouées (1 heure)
+                            - Tokens JWT sécurisés avec signature HMAC256
                             """)
                 .version("1.0.0")
                 .contact(new Contact()

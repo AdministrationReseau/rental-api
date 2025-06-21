@@ -58,7 +58,7 @@ public class OnboardingController {
 
     @Operation(
         summary = "Créer une session d'onboarding",
-        description = "Démarre un nouveau processus d'inscription pour un utilisateur"
+        description = "Démarre un nouveau processus d'inscription pour un futur propriétaire (sans utilisateur existant)"
     )
     @ApiResponses(value = {
         @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -66,31 +66,24 @@ public class OnboardingController {
             description = "Session d'onboarding créée avec succès"
         ),
         @io.swagger.v3.oas.annotations.responses.ApiResponse(
-            responseCode = "400",
-            description = "Données d'entrée invalides"
-        ),
-        @io.swagger.v3.oas.annotations.responses.ApiResponse(
-            responseCode = "409",
-            description = "Session d'onboarding déjà existante pour cet utilisateur"
+            responseCode = "500",
+            description = "Erreur interne du serveur"
         )
     })
     @PostMapping("/session")
-    public ResponseEntity<ApiResponse<OnboardingSessionDto>> createSession(
-        @Parameter(description = "Informations pour créer la session")
-        @Valid @RequestBody CreateOnboardingSessionDto request
-    ) {
-        log.info("POST /onboarding/session - Creating onboarding session for user: {}", request.getUserId());
+    public ResponseEntity<ApiResponse<OnboardingSessionDto>> createSession() {
+        log.info("POST /onboarding/session - Creating new onboarding session");
 
         try {
-            OnboardingSessionDto session = onboardingService.createOnboardingSession(request.getUserId());
-            log.info("Successfully created onboarding session: {} for user: {}", session.getId(), request.getUserId());
+            OnboardingSessionDto session = onboardingService.createOnboardingSession();
+            log.info("Successfully created onboarding session: {}", session.getId());
 
             return ApiResponseUtil.created(
                 session,
                 "Session d'onboarding créée avec succès"
             );
         } catch (Exception e) {
-            log.error("Error creating onboarding session for user: {}", request.getUserId(), e);
+            log.error("Error creating onboarding session", e);
             return ApiResponseUtil.error(
                 "Erreur lors de la création de la session d'onboarding",
                 500
@@ -134,14 +127,14 @@ public class OnboardingController {
     }
 
     @Operation(
-        summary = "Sauvegarder les informations du propriétaire (Étape 1)",
-        description = "Sauvegarde les informations personnelles du propriétaire de l'organisation"
+        summary = "Sauvegarder les informations du futur propriétaire (Étape 1)",
+        description = "Sauvegarde les informations personnelles du futur propriétaire de l'organisation"
     )
     @PutMapping("/session/{sessionId}/owner-info")
     public ResponseEntity<ApiResponse<OnboardingSessionDto>> saveOwnerInfo(
         @Parameter(description = "ID de la session d'onboarding")
         @PathVariable UUID sessionId,
-        @Parameter(description = "Informations du propriétaire")
+        @Parameter(description = "Informations du futur propriétaire")
         @Valid @RequestBody OwnerInfoDto ownerInfo
     ) {
         log.info("PUT /onboarding/session/{}/owner-info - Saving owner information", sessionId);
@@ -207,7 +200,7 @@ public class OnboardingController {
 
     @Operation(
         summary = "Finaliser l'onboarding (Étape 3)",
-        description = "Termine le processus d'inscription avec la sélection du forfait et le paiement"
+        description = "Termine le processus d'inscription avec création du compte OWNER, de l'organisation et de l'abonnement"
     )
     @PostMapping("/session/{sessionId}/complete")
     public ResponseEntity<ApiResponse<OnboardingCompletedDto>> completeOnboarding(
@@ -225,7 +218,7 @@ public class OnboardingController {
             return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponseUtil.success(
                     result,
-                    "Processus d'inscription terminé avec succès"
+                    "Processus d'inscription terminé avec succès. Compte propriétaire et organisation créés."
                 ).getBody());
         } catch (IllegalArgumentException e) {
             log.warn("Invalid session ID or data for completing onboarding: {}", sessionId, e);
@@ -265,7 +258,7 @@ public class OnboardingController {
                 .orElseGet(() -> {
                     log.warn("Owner info not found for session: {}", sessionId);
                     return ApiResponseUtil.notFound(
-                        "Informations du propriétaire non trouvées"
+                        "Informations du propriétaire non trouvées pour cette session"
                     );
                 });
         } catch (Exception e) {
@@ -300,7 +293,7 @@ public class OnboardingController {
                 .orElseGet(() -> {
                     log.warn("Organization info not found for session: {}", sessionId);
                     return ApiResponseUtil.notFound(
-                        "Informations de l'organisation non trouvées"
+                        "Informations de l'organisation non trouvées pour cette session"
                     );
                 });
         } catch (Exception e) {
@@ -369,35 +362,76 @@ public class OnboardingController {
     }
 
     @Operation(
-        summary = "Récupérer la session active d'un utilisateur",
-        description = "Retourne la session d'onboarding en cours pour un utilisateur spécifique"
+        summary = "Étendre la durée d'une session",
+        description = "Prolonge la durée de vie d'une session d'onboarding active"
     )
-    @GetMapping("/user/{userId}/active-session")
-    public ResponseEntity<ApiResponse<OnboardingSessionDto>> getActiveSessionByUserId(
-        @Parameter(description = "ID de l'utilisateur")
-        @PathVariable UUID userId
+    @PatchMapping("/session/{sessionId}/extend")
+    public ResponseEntity<ApiResponse<OnboardingSessionDto>> extendSession(
+        @Parameter(description = "ID de la session d'onboarding")
+        @PathVariable UUID sessionId,
+        @Parameter(description = "Nombre d'heures à ajouter (défaut: 24)")
+        @RequestParam(defaultValue = "24") int additionalHours
     ) {
-        log.info("GET /onboarding/user/{}/active-session - Fetching active session for user", userId);
+        log.info("PATCH /onboarding/session/{}/extend - Extending session by {} hours", sessionId, additionalHours);
 
         try {
-            return onboardingService.getActiveSessionByUserId(userId)
-                .map(session -> {
-                    log.info("Successfully fetched active session for user: {}", userId);
-                    return ApiResponseUtil.success(
-                        session,
-                        "Session active récupérée avec succès"
-                    );
-                })
-                .orElseGet(() -> {
-                    log.info("No active onboarding session found for user: {}", userId);
-                    return ApiResponseUtil.notFound(
-                        "Aucune session d'onboarding active trouvée pour cet utilisateur"
-                    );
-                });
+            // TODO: Implémenter la méthode extendSession dans le service
+            return ApiResponseUtil.success(
+                null,
+                "Fonctionnalité d'extension de session à implémenter"
+            );
         } catch (Exception e) {
-            log.error("Error fetching active session for user: {}", userId, e);
+            log.error("Error extending onboarding session: {}", sessionId, e);
             return ApiResponseUtil.error(
-                "Erreur lors de la récupération de la session active",
+                "Erreur lors de l'extension de la session d'onboarding",
+                500
+            );
+        }
+    }
+
+    @Operation(
+        summary = "Obtenir les sessions actives",
+        description = "Retourne toutes les sessions d'onboarding actuellement en cours"
+    )
+    @GetMapping("/sessions/active")
+    public ResponseEntity<ApiResponse<List<OnboardingSessionDto>>> getActiveSessions() {
+        log.info("GET /onboarding/sessions/active - Fetching active onboarding sessions");
+
+        try {
+            // TODO: Implémenter la méthode getActiveSessions dans le service
+            return ApiResponseUtil.success(
+                List.of(),
+                "Sessions actives récupérées avec succès (fonctionnalité à implémenter)"
+            );
+        } catch (Exception e) {
+            log.error("Error fetching active onboarding sessions", e);
+            return ApiResponseUtil.error(
+                "Erreur lors de la récupération des sessions actives",
+                500
+            );
+        }
+    }
+
+    @Operation(
+        summary = "Nettoyer les sessions expirées",
+        description = "Met à jour le statut des sessions expirées (tâche administrative)"
+    )
+    @PostMapping("/sessions/cleanup")
+    public ResponseEntity<ApiResponse<String>> cleanupExpiredSessions() {
+        log.info("POST /onboarding/sessions/cleanup - Cleaning up expired sessions");
+
+        try {
+            onboardingService.updateExpiredSessions();
+            log.info("Successfully cleaned up expired onboarding sessions");
+
+            return ApiResponseUtil.success(
+                "Nettoyage effectué avec succès",
+                "Sessions expirées mises à jour"
+            );
+        } catch (Exception e) {
+            log.error("Error cleaning up expired onboarding sessions", e);
+            return ApiResponseUtil.error(
+                "Erreur lors du nettoyage des sessions expirées",
                 500
             );
         }
