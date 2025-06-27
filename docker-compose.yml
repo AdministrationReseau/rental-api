@@ -28,7 +28,7 @@ services:
             - SPRING_CASSANDRA_KEYSPACE_NAME=rental
             - SPRING_CASSANDRA_USERNAME=cassandra
             - SPRING_CASSANDRA_PASSWORD=cassandra
-            - SPRING_CASSANDRA_PORT=9045
+            - SPRING_CASSANDRA_PORT=9042
             - SPRING_CASSANDRA_LOCAL_DATACENTER=datacenter1
             - spring.cassandra.schema-action=CREATE_IF_NOT_EXISTS
             - spring.cassandra.request.timeout=10s
