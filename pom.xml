@@ -28,7 +28,21 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
+        <testcontainers.version>1.19.8</testcontainers.version>
 	</properties>
+    <!-- AJOUTER CETTE SECTION POUR GÉRER LES VERSIONS -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.testcontainers</groupId>
+                <artifactId>testcontainers-bom</artifactId>
+                <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    
 	<dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -43,6 +57,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
         </dependency>
 
         <dependency>
@@ -119,11 +139,26 @@
 			<scope>test</scope>
 		</dependency>
 
+        <!-- Dépendance principale de Testcontainers (obligatoire) -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Module d'intégration avec JUnit 5 (celui qui manquait) -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>cassandra</artifactId>
             <scope>test</scope>
         </dependency>
+            
 	</dependencies>
 
 	<build>
