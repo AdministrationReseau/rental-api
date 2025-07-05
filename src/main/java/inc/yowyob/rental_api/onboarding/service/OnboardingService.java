@@ -9,6 +9,11 @@ import inc.yowyob.rental_api.core.enums.UserType;
 import inc.yowyob.rental_api.onboarding.dto.*;
 import inc.yowyob.rental_api.onboarding.entities.OnboardingSession;
 import inc.yowyob.rental_api.onboarding.repository.OnboardingSessionRepository;
+import inc.yowyob.rental_api.organization.dto.CreateOrganizationDto;
+import inc.yowyob.rental_api.organization.dto.OrganizationDto;
+import inc.yowyob.rental_api.organization.dto.OrganizationPolicyDto;
+import inc.yowyob.rental_api.organization.dto.OrganizationSettingsDto;
+import inc.yowyob.rental_api.organization.service.OrganizationService;
 import inc.yowyob.rental_api.subscription.entities.OrganizationSubscription;
 import inc.yowyob.rental_api.subscription.entities.SubscriptionPlan;
 import inc.yowyob.rental_api.subscription.service.SubscriptionService;
@@ -33,6 +38,7 @@ public class OnboardingService {
 
     private final OnboardingSessionRepository onboardingSessionRepository;
     private final SubscriptionService subscriptionService;
+    private final OrganizationService organizationService; // NOUVEAU: Service d'organisation
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final ObjectMapper objectMapper;
@@ -120,7 +126,7 @@ public class OnboardingService {
 
     /**
      * Finalise le processus d'onboarding (Étape 3)
-     * CRÉATION EFFECTIVE DE L'UTILISATEUR OWNER ET DE L'ORGANISATION
+     * CRÉATION RÉELLE DE L'UTILISATEUR OWNER ET DE L'ORGANISATION
      */
     @Transactional
     public OnboardingCompletedDto completeOnboarding(UUID sessionId, SubscriptionInfoDto subscriptionInfo) {
@@ -147,12 +153,12 @@ public class OnboardingService {
             User owner = createOwnerUser(ownerInfo);
             log.info("Owner user created with ID: {}", owner.getId());
 
-            // 2. CRÉER L'ORGANISATION (simulation pour l'instant)
-            UUID organizationId = createOrganization(organizationInfo, owner.getId());
-            log.info("Organization created with ID: {}", organizationId);
+            // 2. CRÉER L'ORGANISATION (RÉELLEMENT MAINTENANT)
+            OrganizationDto organization = createOrganizationFromOnboarding(organizationInfo, owner.getId());
+            log.info("Organization created with ID: {}", organization.getId());
 
             // 3. LIER L'UTILISATEUR À L'ORGANISATION
-            owner.setOrganizationId(organizationId);
+            owner.setOrganizationId(organization.getId());
             userRepository.save(owner);
 
             // 4. CRÉER L'ABONNEMENT
@@ -160,30 +166,33 @@ public class OnboardingService {
                 .orElseThrow(() -> new IllegalArgumentException("Plan d'abonnement non trouvé"));
 
             OrganizationSubscription subscription = subscriptionService.createSubscription(
-                organizationId,
+                organization.getId(),
                 subscriptionInfo.getSubscriptionPlanId(),
                 subscriptionInfo.getPaymentMethod(),
                 subscriptionInfo.getPaymentReference(),
                 plan.getPrice()
             );
 
-            // 5. SAUVEGARDER LES INFOS DE SOUSCRIPTION
+            // 5. METTRE À JOUR LES LIMITES DE L'ORGANISATION SELON LE PLAN
+            organizationService.updateOrganizationLimits(organization.getId(), plan);
+
+            // 6. SAUVEGARDER LES INFOS DE SOUSCRIPTION
             String subscriptionInfoJson = objectMapper.writeValueAsString(subscriptionInfo);
             session.updateSubscriptionInfo(subscriptionInfoJson);
 
-            // 6. MARQUER LA SESSION COMME TERMINÉE
-            session.complete(organizationId);
+            // 7. MARQUER LA SESSION COMME TERMINÉE
+            session.complete(organization.getId());
             session.setUserId(owner.getId()); // Maintenant on peut lier l'utilisateur
             onboardingSessionRepository.save(session);
 
             log.info("Onboarding completed successfully for session: {}", sessionId);
 
-            // 7. TODO: Envoyer email de bienvenue avec mot de passe temporaire
+            // 8. TODO: Envoyer email de bienvenue avec mot de passe temporaire
             // sendWelcomeEmail(owner, temporaryPassword);
 
             return new OnboardingCompletedDto(
-                organizationId,
-                organizationInfo.getOrganizationName(),
+                organization.getId(),
+                organization.getName(),
                 subscription.getId(),
                 plan.getName()
             );
@@ -330,17 +339,62 @@ public class OnboardingService {
     }
 
     /**
-     * Crée l'organisation (simulation pour l'instant - sera implémenté en Phase 5)
+     * NOUVEAU: Crée l'organisation à partir des informations d'onboarding
      */
-    private UUID createOrganization(OrganizationInfoDto organizationInfo, UUID ownerId) {
+    private OrganizationDto createOrganizationFromOnboarding(OrganizationInfoDto organizationInfo, UUID ownerId) {
         log.info("Creating organization: {} for owner: {}", organizationInfo.getOrganizationName(), ownerId);
 
-        // TODO: Implémenter la création réelle de l'organisation en Phase 5
-        // Pour l'instant, retourner un UUID simulé
-        UUID organizationId = UUID.randomUUID();
+        // Mapper les données d'onboarding vers le DTO de création d'organisation
+        CreateOrganizationDto createOrgDto = new CreateOrganizationDto();
+        createOrgDto.setName(organizationInfo.getOrganizationName());
+        createOrgDto.setOrganizationType(organizationInfo.getOrganizationType());
+        createOrgDto.setDescription(organizationInfo.getDescription());
+        createOrgDto.setRegistrationNumber(organizationInfo.getRegistrationNumber());
+        createOrgDto.setTaxNumber(organizationInfo.getTaxNumber());
+        createOrgDto.setAddress(organizationInfo.getAddress());
+        createOrgDto.setCity(organizationInfo.getCity());
+        createOrgDto.setCountry(organizationInfo.getCountry());
 
-        log.info("Organization created (simulated) with ID: {} - will be implemented in Phase 5", organizationId);
-        return organizationId;
+        // Mapper les politiques
+        if (organizationInfo.getPolicies() != null) {
+            createOrgDto.setPolicies(mapOnboardingPolicyToOrganizationPolicy(organizationInfo.getPolicies()));
+        }
+
+        // Paramètres par défaut
+        OrganizationSettingsDto defaultSettings = new OrganizationSettingsDto();
+        createOrgDto.setSettings(defaultSettings);
+
+        // Créer l'organisation via le service
+        return organizationService.createOrganization(createOrgDto, ownerId);
+    }
+
+    /**
+     * Mappe les politiques d'onboarding vers les politiques d'organisation
+     */
+    private OrganizationPolicyDto mapOnboardingPolicyToOrganizationPolicy(OrganizationPolicyDto onboardingPolicy) {
+        OrganizationPolicyDto orgPolicy = new OrganizationPolicyDto();
+
+        // Copier toutes les propriétés (les DTOs sont identiques)
+        orgPolicy.setWithDriverOption(onboardingPolicy.getWithDriverOption());
+        orgPolicy.setWithoutDriverOption(onboardingPolicy.getWithoutDriverOption());
+        orgPolicy.setDriverMandatory(onboardingPolicy.getDriverMandatory());
+        orgPolicy.setMinRentalHours(onboardingPolicy.getMinRentalHours());
+        orgPolicy.setMaxRentalDays(onboardingPolicy.getMaxRentalDays());
+        orgPolicy.setSecurityDeposit(onboardingPolicy.getSecurityDeposit());
+        orgPolicy.setLateReturnPenalty(onboardingPolicy.getLateReturnPenalty());
+        orgPolicy.setMinDriverAge(onboardingPolicy.getMinDriverAge());
+        orgPolicy.setMaxDriverAge(onboardingPolicy.getMaxDriverAge());
+        orgPolicy.setRequireDriverLicense(onboardingPolicy.getRequireDriverLicense());
+        orgPolicy.setRequireCreditCard(onboardingPolicy.getRequireCreditCard());
+        orgPolicy.setAllowWeekendRental(onboardingPolicy.getAllowWeekendRental());
+        orgPolicy.setAllowHolidayRental(onboardingPolicy.getAllowHolidayRental());
+        orgPolicy.setCancellationPolicy(onboardingPolicy.getCancellationPolicy());
+        orgPolicy.setFreeCancellationHours(onboardingPolicy.getFreeCancellationHours());
+        orgPolicy.setCancellationFeePercentage(onboardingPolicy.getCancellationFeePercentage());
+        orgPolicy.setRefundPolicy(onboardingPolicy.getRefundPolicy());
+        orgPolicy.setRefundProcessingDays(onboardingPolicy.getRefundProcessingDays());
+
+        return orgPolicy;
     }
 
     /**

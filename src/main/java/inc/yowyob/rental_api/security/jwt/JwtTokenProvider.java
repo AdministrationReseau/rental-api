@@ -26,7 +26,7 @@ public class JwtTokenProvider {
     }
 
     /**
-     * Génère un token JWT pour un utilisateur
+     * Génère un token JWT pour un utilisateur avec support des agences
      */
     public String generateToken(User user) {
         Map<String, Object> claims = new HashMap<>();
@@ -34,9 +34,26 @@ public class JwtTokenProvider {
         claims.put("email", user.getEmail());
         claims.put("userType", user.getUserType().getCode());
         claims.put("status", user.getStatus().getCode());
+        claims.put("accessLevel", user.getAccessLevel());
 
+        // Informations organisation
         if (user.getOrganizationId() != null) {
             claims.put("organizationId", user.getOrganizationId().toString());
+        }
+
+        // NOUVEAU: Informations agence pour le personnel
+        if (user.getAgencyId() != null) {
+            claims.put("agencyId", user.getAgencyId().toString());
+            claims.put("isAgencyBound", true);
+        } else {
+            claims.put("isAgencyBound", false);
+        }
+
+        // Informations employé
+        if (user.getEmployeeId() != null) {
+            claims.put("employeeId", user.getEmployeeId());
+            claims.put("department", user.getDepartment());
+            claims.put("position", user.getPosition());
         }
 
         return createToken(claims, user.getEmail(), appProperties.getJwt().getExpiration());
@@ -93,10 +110,54 @@ public class JwtTokenProvider {
     }
 
     /**
+     * NOUVEAU: Extrait l'ID agence du token
+     */
+    public UUID getAgencyIdFromToken(String token) {
+        String agencyId = (String) getClaimsFromToken(token).get("agencyId");
+        return agencyId != null ? UUID.fromString(agencyId) : null;
+    }
+
+    /**
+     * NOUVEAU: Vérifie si l'utilisateur est lié à une agence
+     */
+    public Boolean isAgencyBoundFromToken(String token) {
+        Object isAgencyBound = getClaimsFromToken(token).get("isAgencyBound");
+        return isAgencyBound != null ? (Boolean) isAgencyBound : false;
+    }
+
+    /**
      * Extrait le type d'utilisateur du token
      */
     public String getUserTypeFromToken(String token) {
         return (String) getClaimsFromToken(token).get("userType");
+    }
+
+    /**
+     * NOUVEAU: Extrait le niveau d'accès du token
+     */
+    public String getAccessLevelFromToken(String token) {
+        return (String) getClaimsFromToken(token).get("accessLevel");
+    }
+
+    /**
+     * NOUVEAU: Extrait l'ID employé du token
+     */
+    public String getEmployeeIdFromToken(String token) {
+        return (String) getClaimsFromToken(token).get("employeeId");
+    }
+
+    /**
+     * NOUVEAU: Extrait le département du token
+     */
+    public String getDepartmentFromToken(String token) {
+        return (String) getClaimsFromToken(token).get("department");
+    }
+
+    /**
+     * NOUVEAU: Extrait le poste du token
+     */
+    public String getPositionFromToken(String token) {
+        return (String) getClaimsFromToken(token).get("position");
     }
 
     /**
@@ -157,5 +218,45 @@ public class JwtTokenProvider {
             return bearerToken.substring(7);
         }
         return null;
+    }
+
+    /**
+     * NOUVEAU: Extrait toutes les informations de contexte d'un token
+     */
+    public TokenContext getTokenContext(String token) {
+        Claims claims = getClaimsFromToken(token);
+
+        return TokenContext.builder()
+            .userId(getUserIdFromToken(token))
+            .email(getEmailFromToken(token))
+            .userType(getUserTypeFromToken(token))
+            .accessLevel(getAccessLevelFromToken(token))
+            .organizationId(getOrganizationIdFromToken(token))
+            .agencyId(getAgencyIdFromToken(token))
+            .isAgencyBound(isAgencyBoundFromToken(token))
+            .employeeId(getEmployeeIdFromToken(token))
+            .department(getDepartmentFromToken(token))
+            .position(getPositionFromToken(token))
+            .build();
+    }
+
+    /**
+     * NOUVEAU: Classe pour encapsuler le contexte du token
+     */
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class TokenContext {
+        private UUID userId;
+        private String email;
+        private String userType;
+        private String accessLevel;
+        private UUID organizationId;
+        private UUID agencyId;
+        private Boolean isAgencyBound;
+        private String employeeId;
+        private String department;
+        private String position;
     }
 }
