@@ -8,7 +8,8 @@ public enum UserStatus {
     ACTIVE("active", "Actif"),
     SUSPENDED("suspended", "Suspendu"),
     BANNED("banned", "Banni"),
-    DELETED("deleted", "Supprimé");
+    DELETED("deleted", "Supprimé"),
+    INACTIVE("inactive", "innactif");
 
     private final String code;
     private final String description;

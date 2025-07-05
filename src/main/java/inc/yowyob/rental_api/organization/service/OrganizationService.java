@@ -3,7 +3,6 @@ package inc.yowyob.rental_api.organization.service;
 import inc.yowyob.rental_api.organization.dto.*;
 import inc.yowyob.rental_api.organization.entities.Organization;
 import inc.yowyob.rental_api.organization.repository.OrganizationRepository;
-import inc.yowyob.rental_api.subscription.entities.OrganizationSubscription;
 import inc.yowyob.rental_api.subscription.entities.SubscriptionPlan;
 import inc.yowyob.rental_api.subscription.service.SubscriptionService;
 import inc.yowyob.rental_api.security.util.SecurityUtils;
@@ -128,251 +127,133 @@ public class OrganizationService {
             return Optional.empty();
         }
 
-        log.debug("Fetching organization for current user: {}", currentUserId);
-
-        return organizationRepository.findByOwnerId(currentUserId)
-            .map(this::mapToDto);
-    }
-
-    /**
-     * Récupère l'organisation par propriétaire
-     */
-    public Optional<OrganizationDto> getOrganizationByOwnerId(UUID ownerId) {
-        log.debug("Fetching organization for owner: {}", ownerId);
-
-        // Vérifier que l'utilisateur peut accéder à ces informations
-        if (!SecurityUtils.isCurrentUserSuperAdmin() &&
-            !ownerId.equals(SecurityUtils.getCurrentUserId())) {
-            throw new SecurityException("Access denied to organization information");
+        // Récupérer l'utilisateur pour obtenir son organizationId
+        User currentUser = userRepository.findById(currentUserId).orElse(null);
+        if (currentUser == null || currentUser.getOrganizationId() == null) {
+            return Optional.empty();
         }
 
-        return organizationRepository.findByOwnerId(ownerId)
-            .map(this::mapToDto);
+        Organization organization = organizationRepository.findById(currentUser.getOrganizationId()).orElse(null);
+        if (organization == null) {
+            return Optional.empty();
+        }
+
+        return Optional.of(mapToDto(organization));
     }
 
     /**
-     * Active une organisation
+     * Incrémente le compteur d'agences de l'organisation
      */
     @Transactional
-    public OrganizationDto activateOrganization(UUID organizationId) {
-        log.info("Activating organization: {}", organizationId);
-
-        Organization organization = getOrganizationOrThrow(organizationId);
-        validateOrganizationAccess(organization);
-
-        organization.activate();
-        organization.setUpdatedBy(SecurityUtils.getCurrentUserId());
-
-        Organization savedOrganization = organizationRepository.save(organization);
-        log.info("Organization activated successfully: {}", organizationId);
-
-        return mapToDto(savedOrganization);
-    }
-
-    /**
-     * Désactive une organisation
-     */
-    @Transactional
-    public OrganizationDto deactivateOrganization(UUID organizationId) {
-        log.info("Deactivating organization: {}", organizationId);
-
-        Organization organization = getOrganizationOrThrow(organizationId);
-        validateOrganizationAccess(organization);
-
-        organization.deactivate();
-        organization.setUpdatedBy(SecurityUtils.getCurrentUserId());
-
-        Organization savedOrganization = organizationRepository.save(organization);
-        log.info("Organization deactivated successfully: {}", organizationId);
-
-        return mapToDto(savedOrganization);
-    }
-
-    /**
-     * Met à jour les limites de l'organisation basées sur l'abonnement
-     */
-    @Transactional
-    public void updateOrganizationLimits(UUID organizationId, SubscriptionPlan plan) {
-        log.info("Updating organization limits for: {} with plan: {}", organizationId, plan.getName());
+    public void incrementAgencyCount(UUID organizationId) {
+        log.info("Incrementing agency count for organization: {}", organizationId);
 
         Organization organization = getOrganizationOrThrow(organizationId);
 
-        // Calculer les nouvelles limites basées sur le plan
-        Integer maxAgencies = plan.getMaxAgencies();
-        Integer maxVehicles = plan.getMaxVehicles();
-        Integer maxDrivers = plan.getMaxDrivers();
-        Integer maxUsers = calculateMaxUsers(plan);
-
-        organization.updateLimits(maxAgencies, maxVehicles, maxDrivers, maxUsers);
+        // Incrémenter le compteur
+        Integer currentCount = organization.getCurrentAgencies() != null ? organization.getCurrentAgencies() : 0;
+        organization.setCurrentAgencies(currentCount + 1);
+        organization.setUpdatedAt(LocalDateTime.now());
         organization.setUpdatedBy(SecurityUtils.getCurrentUserId());
 
         organizationRepository.save(organization);
-        log.info("Organization limits updated successfully");
+
+        log.debug("Agency count incremented for organization: {} (new count: {})", organizationId, currentCount + 1);
+    }
+
+    /**
+     * Décrémente le compteur d'agences de l'organisation
+     */
+    @Transactional
+    public void decrementAgencyCount(UUID organizationId) {
+        log.info("Decrementing agency count for organization: {}", organizationId);
+
+        Organization organization = getOrganizationOrThrow(organizationId);
+
+        // Décrémenter le compteur (minimum 0)
+        Integer currentCount = organization.getCurrentAgencies() != null ? organization.getCurrentAgencies() : 0;
+        organization.setCurrentAgencies(Math.max(0, currentCount - 1));
+        organization.setUpdatedAt(LocalDateTime.now());
+        organization.setUpdatedBy(SecurityUtils.getCurrentUserId());
+
+        organizationRepository.save(organization);
+
+        log.debug("Agency count decremented for organization: {} (new count: {})", organizationId, Math.max(0, currentCount - 1));
     }
 
     /**
      * Vérifie si l'organisation peut créer une nouvelle agence
      */
     public boolean canCreateAgency(UUID organizationId) {
+        log.debug("Checking if organization {} can create new agency", organizationId);
+
         Organization organization = getOrganizationOrThrow(organizationId);
-        return organization.canCreateAgency();
+
+        // Vérifier les limites d'abonnement
+        Integer currentAgencies = organization.getCurrentAgencies() != null ? organization.getCurrentAgencies() : 0;
+        Integer maxAgencies = organization.getMaxAgencies() != null ? organization.getMaxAgencies() : 0;
+
+        if (currentAgencies >= maxAgencies) {
+            log.warn("Organization {} has reached maximum agencies limit: {}/{}",
+                organizationId, currentAgencies, maxAgencies);
+            return false;
+        }
+
+        return true;
     }
+
+    // ==================== MÉTHODES UTILITAIRES ====================
 
     /**
-     * Vérifie si l'organisation peut créer un nouveau véhicule
+     * Récupère l'organisation ou lance une exception
      */
-    public boolean canCreateVehicle(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        return organization.canCreateVehicle();
-    }
-
-    /**
-     * Vérifie si l'organisation peut créer un nouveau chauffeur
-     */
-    public boolean canCreateDriver(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        return organization.canCreateDriver();
-    }
-
-    /**
-     * Vérifie si l'organisation peut créer un nouvel utilisateur
-     */
-    public boolean canCreateUser(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        return organization.canCreateUser();
-    }
-
-    /**
-     * Incrémente le compteur d'agences
-     */
-    @Transactional
-    public void incrementAgencyCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.incrementAgencyCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Décrémente le compteur d'agences
-     */
-    @Transactional
-    public void decrementAgencyCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.decrementAgencyCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Incrémente le compteur de véhicules
-     */
-    @Transactional
-    public void incrementVehicleCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.incrementVehicleCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Décrémente le compteur de véhicules
-     */
-    @Transactional
-    public void decrementVehicleCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.decrementVehicleCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Incrémente le compteur de chauffeurs
-     */
-    @Transactional
-    public void incrementDriverCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.incrementDriverCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Décrémente le compteur de chauffeurs
-     */
-    @Transactional
-    public void decrementDriverCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.decrementDriverCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Incrémente le compteur d'utilisateurs
-     */
-    @Transactional
-    public void incrementUserCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.incrementUserCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Décrémente le compteur d'utilisateurs
-     */
-    @Transactional
-    public void decrementUserCount(UUID organizationId) {
-        Organization organization = getOrganizationOrThrow(organizationId);
-        organization.decrementUserCount();
-        organizationRepository.save(organization);
-    }
-
-    /**
-     * Obtient les statistiques de l'organisation
-     */
-    public OrganizationStatsDto getOrganizationStats(UUID organizationId) {
-        log.debug("Fetching organization stats: {}", organizationId);
-
-        Organization organization = getOrganizationOrThrow(organizationId);
-        validateOrganizationAccess(organization);
-
-        return OrganizationStatsDto.builder()
-            .organizationId(organizationId)
-            .organizationName(organization.getName())
-            .totalAgencies(organization.getCurrentAgencies())
-            .totalVehicles(organization.getCurrentVehicles())
-            .totalDrivers(organization.getCurrentDrivers())
-            .totalUsers(organization.getCurrentUsers())
-            .maxAgencies(organization.getMaxAgencies())
-            .maxVehicles(organization.getMaxVehicles())
-            .maxDrivers(organization.getMaxDrivers())
-            .maxUsers(organization.getMaxUsers())
-            .agencyUsagePercentage(organization.getAgencyUsagePercentage())
-            .vehicleUsagePercentage(organization.getVehicleUsagePercentage())
-            .driverUsagePercentage(organization.getDriverUsagePercentage())
-            .userUsagePercentage(organization.getUserUsagePercentage())
-            .isActive(organization.getIsActive())
-            .isVerified(organization.getIsVerified())
-            .createdAt(organization.getCreatedAt())
-            .build();
-    }
-
-    // ==================== MÉTHODES PRIVÉES ====================
-
     private Organization getOrganizationOrThrow(UUID organizationId) {
         return organizationRepository.findById(organizationId)
             .orElseThrow(() -> new IllegalArgumentException("Organization not found: " + organizationId));
     }
 
+    /**
+     * Valide l'accès à une organisation
+     */
     private void validateOrganizationAccess(Organization organization) {
-        if (!SecurityUtils.canAccessOrganization(organization.getId())) {
+        if (!canAccessOrganization(organization)) {
             throw new SecurityException("Access denied to organization");
         }
     }
 
-    private Organization mapToEntity(CreateOrganizationDto createDto, UUID ownerId) {
-        Organization organization = new Organization(
-            createDto.getName(),
-            createDto.getOrganizationType(),
-            ownerId
-        );
+    /**
+     * Vérifie si l'utilisateur connecté peut accéder à l'organisation
+     */
+    private boolean canAccessOrganization(Organization organization) {
+        // Super admin peut tout voir
+        if (SecurityUtils.isCurrentUserSuperAdmin()) {
+            return true;
+        }
 
+        // Propriétaire peut voir son organisation
+        if (SecurityUtils.isCurrentUserOwner()) {
+            UUID currentUserOrgId = SecurityUtils.getCurrentUserOrganizationId();
+            return organization.getId().equals(currentUserOrgId);
+        }
+
+        // Staff peut voir son organisation
+        if (SecurityUtils.isCurrentUserStaff()) {
+            UUID currentUserOrgId = SecurityUtils.getCurrentUserOrganizationId();
+            return organization.getId().equals(currentUserOrgId);
+        }
+
+        return false;
+    }
+
+    /**
+     * Mappe CreateOrganizationDto vers Organization
+     */
+    private Organization mapToEntity(CreateOrganizationDto createDto, UUID ownerId) {
+        Organization organization = new Organization();
+        organization.setName(createDto.getName());
+        organization.setOrganizationType(createDto.getOrganizationType());
         organization.setDescription(createDto.getDescription());
+        organization.setOwnerId(ownerId);
         organization.setRegistrationNumber(createDto.getRegistrationNumber());
         organization.setTaxNumber(createDto.getTaxNumber());
         organization.setBusinessLicense(createDto.getBusinessLicense());
@@ -384,29 +265,37 @@ public class OrganizationService {
         organization.setPhone(createDto.getPhone());
         organization.setEmail(createDto.getEmail());
         organization.setWebsite(createDto.getWebsite());
-        organization.setLogoUrl(createDto.getLogoUrl());
-        organization.setPrimaryColor(createDto.getPrimaryColor());
-        organization.setSecondaryColor(createDto.getSecondaryColor());
+        organization.setIsActive(true);
+        organization.setIsVerified(false);
 
-        // Mapper les politiques
+        // Initialiser les compteurs
+        organization.setCurrentAgencies(0);
+        organization.setCurrentVehicles(0);
+        organization.setCurrentDrivers(0);
+        organization.setCurrentUsers(0);
+
+        // Mapper les politiques si fournies
         if (createDto.getPolicies() != null) {
             organization.setPolicies(mapPolicyToEntity(createDto.getPolicies()));
         }
 
-        // Mapper les paramètres
+        // Mapper les paramètres si fournis
         if (createDto.getSettings() != null) {
             organization.setSettings(mapSettingsToEntity(createDto.getSettings()));
         }
 
+        organization.setCreatedAt(LocalDateTime.now());
+        organization.setUpdatedAt(LocalDateTime.now());
+
         return organization;
     }
 
+    /**
+     * Met à jour l'entité à partir du DTO
+     */
     private void updateEntityFromDto(Organization organization, UpdateOrganizationDto updateDto) {
         if (updateDto.getName() != null) {
             organization.setName(updateDto.getName());
-        }
-        if (updateDto.getOrganizationType() != null) {
-            organization.setOrganizationType(updateDto.getOrganizationType());
         }
         if (updateDto.getDescription() != null) {
             organization.setDescription(updateDto.getDescription());
@@ -453,9 +342,6 @@ public class OrganizationService {
         if (updateDto.getSecondaryColor() != null) {
             organization.setSecondaryColor(updateDto.getSecondaryColor());
         }
-        if (updateDto.getIsActive() != null) {
-            organization.setIsActive(updateDto.getIsActive());
-        }
 
         // Mettre à jour les politiques
         if (updateDto.getPolicies() != null) {
@@ -468,6 +354,60 @@ public class OrganizationService {
         }
     }
 
+    /**
+     * Mappe OrganizationPolicyDto vers Organization.OrganizationPolicy
+     */
+    private Organization.OrganizationPolicy mapPolicyToEntity(OrganizationPolicyDto dto) {
+        Organization.OrganizationPolicy policy = new Organization.OrganizationPolicy();
+        policy.setWithDriverOption(dto.getWithDriverOption());
+        policy.setWithoutDriverOption(dto.getWithoutDriverOption());
+        policy.setDriverMandatory(dto.getDriverMandatory());
+        policy.setMinRentalHours(dto.getMinRentalHours());
+        policy.setMaxRentalDays(dto.getMaxRentalDays());
+        policy.setSecurityDeposit(dto.getSecurityDeposit());
+        policy.setLateReturnPenalty(dto.getLateReturnPenalty());
+        policy.setMinDriverAge(dto.getMinDriverAge());
+        policy.setMaxDriverAge(dto.getMaxDriverAge());
+        policy.setRequireDriverLicense(dto.getRequireDriverLicense());
+        policy.setRequireCreditCard(dto.getRequireCreditCard());
+        policy.setAllowWeekendRental(dto.getAllowWeekendRental());
+        policy.setAllowHolidayRental(dto.getAllowHolidayRental());
+        policy.setCancellationPolicy(dto.getCancellationPolicy());
+        policy.setFreeCancellationHours(dto.getFreeCancellationHours());
+        policy.setCancellationFeePercentage(dto.getCancellationFeePercentage());
+        policy.setRefundPolicy(dto.getRefundPolicy());
+        policy.setRefundProcessingDays(dto.getRefundProcessingDays());
+        return policy;
+    }
+
+    /**
+     * Mappe OrganizationSettingsDto vers Organization.OrganizationSettings
+     */
+    private Organization.OrganizationSettings mapSettingsToEntity(OrganizationSettingsDto dto) {
+        Organization.OrganizationSettings settings = new Organization.OrganizationSettings();
+        settings.setTimezone(dto.getTimezone());
+        settings.setCurrency(dto.getCurrency());
+        settings.setLanguage(dto.getLanguage());
+        settings.setDateFormat(dto.getDateFormat());
+        settings.setEmailNotifications(dto.getEmailNotifications());
+        settings.setSmsNotifications(dto.getSmsNotifications());
+        settings.setPushNotifications(dto.getPushNotifications());
+        settings.setEnableGeofencing(dto.getEnableGeofencing());
+        settings.setEnableChat(dto.getEnableChat());
+        settings.setEnableAdvancedReports(dto.getEnableAdvancedReports());
+        settings.setEnableApiAccess(dto.getEnableApiAccess());
+        settings.setRequireTwoFactorAuth(dto.getRequireTwoFactorAuth());
+        settings.setPasswordExpirationDays(dto.getPasswordExpirationDays());
+        settings.setAuditLogging(dto.getAuditLogging());
+        settings.setEnableMobileMoneyPayments(dto.getEnableMobileMoneyPayments());
+        settings.setEnableCardPayments(dto.getEnableCardPayments());
+        settings.setEnableBankTransfers(dto.getEnableBankTransfers());
+        return settings;
+    }
+
+    /**
+     * Mappe Organization vers OrganizationDto
+     */
     private OrganizationDto mapToDto(Organization organization) {
         OrganizationDto.OrganizationDtoBuilder builder = OrganizationDto.builder()
             .id(organization.getId())
@@ -502,11 +442,7 @@ public class OrganizationService {
             .createdAt(organization.getCreatedAt())
             .updatedAt(organization.getUpdatedAt())
             .createdBy(organization.getCreatedBy())
-            .updatedBy(organization.getUpdatedBy())
-            .agencyUsagePercentage(organization.getAgencyUsagePercentage())
-            .vehicleUsagePercentage(organization.getVehicleUsagePercentage())
-            .driverUsagePercentage(organization.getDriverUsagePercentage())
-            .userUsagePercentage(organization.getUserUsagePercentage());
+            .updatedBy(organization.getUpdatedBy());
 
         // Mapper les politiques
         if (organization.getPolicies() != null) {
@@ -518,49 +454,33 @@ public class OrganizationService {
             builder.settings(mapSettingsToDto(organization.getSettings()));
         }
 
-        // Ajouter les informations d'abonnement
-        try {
-            Optional<OrganizationSubscription> subscription =
-                subscriptionService.getActiveSubscription(organization.getId());
-            if (subscription.isPresent()) {
-                OrganizationSubscription sub = subscription.get();
-                Optional<SubscriptionPlan> plan =
-                    subscriptionService.getPlanById(sub.getSubscriptionPlanId());
-                if (plan.isPresent()) {
-                    builder.subscriptionPlan(plan.get().getName());
-                }
-                builder.subscriptionExpiresAt(sub.getEndDate());
-            }
-        } catch (Exception e) {
-            log.warn("Error loading subscription info for organization: {}", organization.getId(), e);
+        // Calculer les pourcentages d'utilisation
+        if (organization.getMaxAgencies() != null && organization.getMaxAgencies() > 0) {
+            double agencyUsage = (organization.getCurrentAgencies() != null ? organization.getCurrentAgencies() : 0) * 100.0 / organization.getMaxAgencies();
+            builder.agencyUsagePercentage(agencyUsage);
+        }
+
+        if (organization.getMaxVehicles() != null && organization.getMaxVehicles() > 0) {
+            double vehicleUsage = (organization.getCurrentVehicles() != null ? organization.getCurrentVehicles() : 0) * 100.0 / organization.getMaxVehicles();
+            builder.vehicleUsagePercentage(vehicleUsage);
+        }
+
+        if (organization.getMaxDrivers() != null && organization.getMaxDrivers() > 0) {
+            double driverUsage = (organization.getCurrentDrivers() != null ? organization.getCurrentDrivers() : 0) * 100.0 / organization.getMaxDrivers();
+            builder.driverUsagePercentage(driverUsage);
+        }
+
+        if (organization.getMaxUsers() != null && organization.getMaxUsers() > 0) {
+            double userUsage = (organization.getCurrentUsers() != null ? organization.getCurrentUsers() : 0) * 100.0 / organization.getMaxUsers();
+            builder.userUsagePercentage(userUsage);
         }
 
         return builder.build();
     }
 
-    private Organization.OrganizationPolicy mapPolicyToEntity(OrganizationPolicyDto dto) {
-        Organization.OrganizationPolicy policy = new Organization.OrganizationPolicy();
-        policy.setWithDriverOption(dto.getWithDriverOption());
-        policy.setWithoutDriverOption(dto.getWithoutDriverOption());
-        policy.setDriverMandatory(dto.getDriverMandatory());
-        policy.setMinRentalHours(dto.getMinRentalHours());
-        policy.setMaxRentalDays(dto.getMaxRentalDays());
-        policy.setSecurityDeposit(dto.getSecurityDeposit());
-        policy.setLateReturnPenalty(dto.getLateReturnPenalty());
-        policy.setMinDriverAge(dto.getMinDriverAge());
-        policy.setMaxDriverAge(dto.getMaxDriverAge());
-        policy.setRequireDriverLicense(dto.getRequireDriverLicense());
-        policy.setRequireCreditCard(dto.getRequireCreditCard());
-        policy.setAllowWeekendRental(dto.getAllowWeekendRental());
-        policy.setAllowHolidayRental(dto.getAllowHolidayRental());
-        policy.setCancellationPolicy(dto.getCancellationPolicy());
-        policy.setFreeCancellationHours(dto.getFreeCancellationHours());
-        policy.setCancellationFeePercentage(dto.getCancellationFeePercentage());
-        policy.setRefundPolicy(dto.getRefundPolicy());
-        policy.setRefundProcessingDays(dto.getRefundProcessingDays());
-        return policy;
-    }
-
+    /**
+     * Mappe Organization.OrganizationPolicy vers OrganizationPolicyDto
+     */
     private OrganizationPolicyDto mapPolicyToDto(Organization.OrganizationPolicy policy) {
         OrganizationPolicyDto dto = new OrganizationPolicyDto();
         dto.setWithDriverOption(policy.getWithDriverOption());
@@ -584,28 +504,9 @@ public class OrganizationService {
         return dto;
     }
 
-    private Organization.OrganizationSettings mapSettingsToEntity(OrganizationSettingsDto dto) {
-        Organization.OrganizationSettings settings = new Organization.OrganizationSettings();
-        settings.setTimezone(dto.getTimezone());
-        settings.setCurrency(dto.getCurrency());
-        settings.setLanguage(dto.getLanguage());
-        settings.setDateFormat(dto.getDateFormat());
-        settings.setEmailNotifications(dto.getEmailNotifications());
-        settings.setSmsNotifications(dto.getSmsNotifications());
-        settings.setPushNotifications(dto.getPushNotifications());
-        settings.setEnableGeofencing(dto.getEnableGeofencing());
-        settings.setEnableChat(dto.getEnableChat());
-        settings.setEnableAdvancedReports(dto.getEnableAdvancedReports());
-        settings.setEnableApiAccess(dto.getEnableApiAccess());
-        settings.setRequireTwoFactorAuth(dto.getRequireTwoFactorAuth());
-        settings.setPasswordExpirationDays(dto.getPasswordExpirationDays());
-        settings.setAuditLogging(dto.getAuditLogging());
-        settings.setEnableMobileMoneyPayments(dto.getEnableMobileMoneyPayments());
-        settings.setEnableCardPayments(dto.getEnableCardPayments());
-        settings.setEnableBankTransfers(dto.getEnableBankTransfers());
-        return settings;
-    }
-
+    /**
+     * Mappe Organization.OrganizationSettings vers OrganizationSettingsDto
+     */
     private OrganizationSettingsDto mapSettingsToDto(Organization.OrganizationSettings settings) {
         OrganizationSettingsDto dto = new OrganizationSettingsDto();
         dto.setTimezone(settings.getTimezone());
@@ -628,40 +529,103 @@ public class OrganizationService {
         return dto;
     }
 
-    private Integer calculateMaxUsers(SubscriptionPlan plan) {
-        // Calculer le nombre max d'utilisateurs basé sur le plan
-        // Par exemple agences * 10 + véhicules * 0.5 + chauffeurs
-        int baseUsers = plan.getMaxAgencies() * 10; // 10 utilisateurs par agence
-        int vehicleUsers = (int) (plan.getMaxVehicles() * 0.5); // 0.5 utilisateur par véhicule
-        int driverUsers = plan.getMaxDrivers(); // 1 utilisateur par chauffeur
+    /**
+     * Met à jour les limites de l'organisation selon le plan d'abonnement
+     */
+    @Transactional
+    public void updateOrganizationLimits(UUID organizationId, SubscriptionPlan plan) {
+        log.info("Updating organization limits for organization: {} with plan: {}", organizationId, plan.getName());
 
-        return baseUsers + vehicleUsers + driverUsers;
+        Organization organization = getOrganizationOrThrow(organizationId);
+
+        // Mettre à jour les limites selon le plan
+        organization.setMaxAgencies(plan.getMaxAgencies());
+        organization.setMaxVehicles(plan.getMaxVehicles());
+        organization.setMaxDrivers(plan.getMaxDrivers());
+
+        // Mettre à jour les métadonnées
+        organization.setUpdatedAt(LocalDateTime.now());
+        organization.setUpdatedBy(SecurityUtils.getCurrentUserId());
+
+        organizationRepository.save(organization);
+
+        log.info("Organization limits updated successfully for organization: {} - Agencies: {}, Vehicles: {}, Drivers: {}",
+            organizationId, plan.getMaxAgencies(), plan.getMaxVehicles(), plan.getMaxDrivers());
     }
-}
 
-/**
- * DTO pour les statistiques d'organisation
- */
-@lombok.Data
-@lombok.NoArgsConstructor
-@lombok.AllArgsConstructor
-@lombok.Builder
-class OrganizationStatsDto {
-    private UUID organizationId;
-    private String organizationName;
-    private Integer totalAgencies;
-    private Integer totalVehicles;
-    private Integer totalDrivers;
-    private Integer totalUsers;
-    private Integer maxAgencies;
-    private Integer maxVehicles;
-    private Integer maxDrivers;
-    private Integer maxUsers;
-    private Double agencyUsagePercentage;
-    private Double vehicleUsagePercentage;
-    private Double driverUsagePercentage;
-    private Double userUsagePercentage;
-    private Boolean isActive;
-    private Boolean isVerified;
-    private LocalDateTime createdAt;
+    /**
+     * Met à jour les limites de l'organisation avec des valeurs spécifiques
+     */
+    @Transactional
+    public void updateOrganizationLimits(UUID organizationId, Integer maxAgencies, Integer maxVehicles,
+                                         Integer maxDrivers, Integer maxUsers) {
+        log.info("Updating organization limits for organization: {} with custom values", organizationId);
+
+        Organization organization = getOrganizationOrThrow(organizationId);
+
+        // Mettre à jour les limites avec les valeurs fournies
+        if (maxAgencies != null) {
+            organization.setMaxAgencies(maxAgencies);
+        }
+        if (maxVehicles != null) {
+            organization.setMaxVehicles(maxVehicles);
+        }
+        if (maxDrivers != null) {
+            organization.setMaxDrivers(maxDrivers);
+        }
+        if (maxUsers != null) {
+            organization.setMaxUsers(maxUsers);
+        }
+
+        // Mettre à jour les métadonnées
+        organization.setUpdatedAt(LocalDateTime.now());
+        organization.setUpdatedBy(SecurityUtils.getCurrentUserId());
+
+        organizationRepository.save(organization);
+
+        log.info("Organization limits updated successfully with custom values for organization: {}", organizationId);
+    }
+
+    /**
+     * Récupère les limites d'utilisation actuelles de l'organisation
+     */
+    public OrganizationUsageLimitsDto getUsageLimits(UUID organizationId) {
+        log.debug("Fetching usage limits for organization: {}", organizationId);
+
+        Organization organization = getOrganizationOrThrow(organizationId);
+        validateOrganizationAccess(organization);
+
+        return OrganizationUsageLimitsDto.builder()
+            .organizationId(organizationId)
+            .maxAgencies(organization.getMaxAgencies())
+            .maxVehicles(organization.getMaxVehicles())
+            .maxDrivers(organization.getMaxDrivers())
+            .maxUsers(organization.getMaxUsers())
+            .currentAgencies(organization.getCurrentAgencies())
+            .currentVehicles(organization.getCurrentVehicles())
+            .currentDrivers(organization.getCurrentDrivers())
+            .currentUsers(organization.getCurrentUsers())
+            .agencyUsagePercentage(calculateUsagePercentage(organization.getCurrentAgencies(), organization.getMaxAgencies()))
+            .vehicleUsagePercentage(calculateUsagePercentage(organization.getCurrentVehicles(), organization.getMaxVehicles()))
+            .driverUsagePercentage(calculateUsagePercentage(organization.getCurrentDrivers(), organization.getMaxDrivers()))
+            .userUsagePercentage(calculateUsagePercentage(organization.getCurrentUsers(), organization.getMaxUsers()))
+            .canCreateAgency(organization.getCurrentAgencies() < organization.getMaxAgencies())
+            .canCreateVehicle(organization.getCurrentVehicles() < organization.getMaxVehicles())
+            .canCreateDriver(organization.getCurrentDrivers() < organization.getMaxDrivers())
+            .canCreateUser(organization.getCurrentUsers() < organization.getMaxUsers())
+            .build();
+    }
+
+    /**
+     * Calcule le pourcentage d'utilisation
+     */
+    private Double calculateUsagePercentage(Integer current, Integer max) {
+        if (max == null || max == 0) {
+            return 0.0;
+        }
+        if (current == null) {
+            return 0.0;
+        }
+        return (current * 100.0) / max;
+    }
 }

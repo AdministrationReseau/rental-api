@@ -69,6 +69,41 @@ public class AgencyService {
     }
 
     /**
+     * Récupère toutes les agences selon les permissions et filtres
+     */
+    public List<AgencyDto> getAllAgencies(UUID organizationId, Boolean activeOnly) {
+        log.debug("Fetching agencies for organization: {}, activeOnly: {}", organizationId, activeOnly);
+
+        List<Agency> agencies;
+
+        if (organizationId != null) {
+            // Vérifier l'accès à l'organisation spécifiée
+            if (!SecurityUtils.canAccessOrganization(organizationId)) {
+                throw new SecurityException("Access denied to organization");
+            }
+
+            agencies = (activeOnly != null && activeOnly)
+                ? agencyRepository.findActiveByOrganizationId(organizationId)
+                : agencyRepository.findByOrganizationId(organizationId);
+        } else {
+            // Récupérer selon le niveau d'accès de l'utilisateur
+            UUID currentUserOrgId = SecurityUtils.getCurrentUserOrganizationId();
+            if (currentUserOrgId == null) {
+                return List.of(); // Aucune organisation = aucune agence
+            }
+
+            agencies = (activeOnly != null && activeOnly)
+                ? agencyRepository.findActiveByOrganizationId(currentUserOrgId)
+                : agencyRepository.findByOrganizationId(currentUserOrgId);
+        }
+
+        return agencies.stream()
+            .filter(this::canAccessAgency)
+            .map(this::mapToDto)
+            .collect(Collectors.toList());
+    }
+
+    /**
      * Met à jour une agence
      */
     @Transactional

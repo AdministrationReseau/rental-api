@@ -47,9 +47,8 @@ public class User {
     @NotNull(message = "User status is required")
     private UserStatus status;
 
-    // NOUVEAU: Support des agences pour le personnel
     private UUID organizationId;
-    private UUID agencyId; // Pour les utilisateurs STAFF et DRIVER
+    private UUID agencyId;
 
     private String profileImageUrl;
     private String address;
@@ -75,8 +74,8 @@ public class User {
     private String lastLoginIp;
     private Integer failedLoginAttempts = 0;
     private LocalDateTime lockedUntil;
+    private Boolean mustChangePassword;
 
-    // NOUVEAU: Informations personnel/employé
     private String employeeId; // ID employé pour le personnel
     private String department; // Département/Service
     private String position; // Poste/Fonction

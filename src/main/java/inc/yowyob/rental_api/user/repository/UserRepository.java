@@ -184,4 +184,40 @@ public interface UserRepository extends CassandraRepository<User, UUID> {
      */
     @Query("SELECT * FROM users WHERE user_type = 'SUPER_ADMIN' ALLOW FILTERING")
     List<User> findSuperAdmins();
+
+    /**
+     * Trouve les utilisateurs par agence
+     */
+    @Query("SELECT * FROM users WHERE agency_id = ?0 ALLOW FILTERING")
+    List<User> findByAgencyId(UUID agencyId);
+
+    /**
+     * Trouve les utilisateurs par organisation, type et agence
+     */
+    @Query("SELECT * FROM users WHERE organization_id = ?0 AND user_type = ?1 AND agency_id = ?2 ALLOW FILTERING")
+    List<User> findByOrganizationIdAndUserTypeAndAgencyId(UUID organizationId, UserType userType, UUID agencyId);
+
+    /**
+     * Trouve les utilisateurs STAFF d'une agence
+     */
+    @Query("SELECT * FROM users WHERE agency_id = ?0 AND user_type = 'STAFF' ALLOW FILTERING")
+    List<User> findStaffByAgencyId(UUID agencyId);
+
+    /**
+     * Compte les utilisateurs par type dans une organisation
+     */
+    @Query("SELECT COUNT(*) FROM users WHERE organization_id = ?0 AND user_type = ?1 ALLOW FILTERING")
+    Long countByOrganizationIdAndUserType(UUID organizationId, UserType userType);
+
+    /**
+     * Compte les utilisateurs actifs par type dans une organisation
+     */
+    @Query("SELECT COUNT(*) FROM users WHERE organization_id = ?0 AND user_type = ?1 AND status = 'ACTIVE' ALLOW FILTERING")
+    Long countActiveByOrganizationIdAndUserType(UUID organizationId, UserType userType);
+
+    /**
+     * Trouve les superviseurs potentiels (STAFF avec position de management)
+     */
+    @Query("SELECT * FROM users WHERE organization_id = ?0 AND user_type = 'STAFF' AND position LIKE '%manager%' OR position LIKE '%supervisor%' ALLOW FILTERING")
+    List<User> findPotentialSupervisorsByOrganizationId(UUID organizationId);
 }

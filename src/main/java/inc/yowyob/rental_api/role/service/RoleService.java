@@ -7,6 +7,7 @@ import inc.yowyob.rental_api.role.entities.Role;
 import inc.yowyob.rental_api.role.entities.UserRole;
 import inc.yowyob.rental_api.role.repository.RoleRepository;
 import inc.yowyob.rental_api.role.repository.UserRoleRepository;
+import inc.yowyob.rental_api.security.util.SecurityUtils;
 import inc.yowyob.rental_api.user.entities.User;
 import inc.yowyob.rental_api.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -508,6 +509,142 @@ public class RoleService {
         log.info("Created {} default roles for organization: {}", createdRoles.size(), organizationId);
         return createdRoles;
     }
+
+    /**
+     * Assigne des rôles à un utilisateur
+     */
+    @Transactional
+    public List<UserRoleDto> assignRolesToUser(UUID userId, List<UUID> roleIds, UUID assignedBy) {
+        log.info("Assigning roles {} to user {}", roleIds, userId);
+
+        // Vérifier que l'utilisateur existe
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new IllegalArgumentException("User not found"));
+
+        // Vérifier les permissions d'assignation
+        validateRoleAssignmentPermissions(user, roleIds, assignedBy);
+
+        // Supprimer les rôles existants
+        List<UserRole> existingRoles = userRoleRepository.findByUserId(userId);
+        if (!existingRoles.isEmpty()) {
+            userRoleRepository.deleteAll(existingRoles);
+        }
+
+        // Assigner les nouveaux rôles
+        List<UserRole> userRoles = new ArrayList<>();
+        for (UUID roleId : roleIds) {
+            Role role = roleRepository.findById(roleId)
+                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleId));
+
+            UserRole userRole = new UserRole();
+            userRole.setUserId(userId);
+            userRole.setRoleId(roleId);
+            userRole.setOrganizationId(user.getOrganizationId());
+            userRole.setAgencyId(user.getAgencyId());
+            userRole.setAssignedAt(LocalDateTime.now());
+            userRole.setAssignedBy(assignedBy);
+            userRole.setIsActive(true);
+
+            userRoles.add(userRole);
+        }
+
+        List<UserRole> savedUserRoles = userRoleRepository.saveAll(userRoles);
+
+        return savedUserRoles.stream()
+            .map(this::mapToUserRoleDto)
+            .collect(Collectors.toList());
+    }
+
+    /**
+     * Valide les permissions d'assignation de rôles
+     */
+    private void validateRoleAssignmentPermissions(User targetUser, List<UUID> roleIds, UUID assignedBy) {
+        // Super admin peut tout faire
+        if (SecurityUtils.isCurrentUserSuperAdmin()) {
+            return;
+        }
+
+        // Propriétaire peut assigner des rôles dans son organisation
+        if (SecurityUtils.isCurrentUserOwner()) {
+            UUID currentUserOrgId = SecurityUtils.getCurrentUserOrganizationId();
+            if (!targetUser.getOrganizationId().equals(currentUserOrgId)) {
+                throw new SecurityException("Cannot assign roles to users outside your organization");
+            }
+
+            // Vérifier que tous les rôles appartiennent à l'organisation
+            for (UUID roleId : roleIds) {
+                Role role = roleRepository.findById(roleId)
+                    .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleId));
+
+                if (!role.getOrganizationId().equals(currentUserOrgId)) {
+                    throw new SecurityException("Cannot assign roles from other organizations");
+                }
+            }
+            return;
+        }
+
+        // Autres utilisateurs doivent avoir la permission USER_MANAGE_ROLES
+        if (!SecurityUtils.getCurrentUser().getAuthorities().stream()
+            .anyMatch(auth -> auth.getAuthority().equals("USER_MANAGE_ROLES"))) {
+            throw new SecurityException("Insufficient permissions to assign roles");
+        }
+    }
+
+    /**
+     * Mappe UserRole vers UserRoleDto
+     */
+    private UserRoleDto mapToUserRoleDto(UserRole userRole) {
+        // Récupérer les informations du rôle
+        Role role = roleRepository.findById(userRole.getRoleId()).orElse(null);
+        User user = userRepository.findById(userRole.getUserId()).orElse(null);
+
+        UserRoleDto.UserRoleDtoBuilder builder = UserRoleDto.builder()
+            .id(userRole.getId())
+            .userId(userRole.getUserId())
+            .roleId(userRole.getRoleId())
+            .organizationId(userRole.getOrganizationId())
+            .agencyId(userRole.getAgencyId())
+            .assignedAt(userRole.getAssignedAt())
+            .expiresAt(userRole.getExpiresAt())
+            .isActive(userRole.getIsActive())
+            .assignmentReason(userRole.getAssignmentReason())
+            .assignedBy(userRole.getAssignedBy());
+
+        // Ajouter les informations du rôle si disponibles
+        if (role != null) {
+            builder.roleName(role.getName())
+                .roleDescription(role.getDescription())
+                .roleColor(role.getColor())
+                .roleIcon(role.getIcon());
+        }
+
+        // Ajouter les informations de l'utilisateur si disponibles
+        if (user != null) {
+            builder.userFullName(user.getFirstName() + " " + user.getLastName())
+                .userEmail(user.getEmail());
+        }
+
+        // Calculer les informations d'expiration
+        if (userRole.getExpiresAt() != null) {
+            LocalDateTime now = LocalDateTime.now();
+            builder.isExpired(userRole.getExpiresAt().isBefore(now));
+
+            if (userRole.getExpiresAt().isAfter(now)) {
+                long daysUntilExpiration = java.time.temporal.ChronoUnit.DAYS.between(now, userRole.getExpiresAt());
+                builder.daysUntilExpiration(daysUntilExpiration)
+                    .isExpiringSoon(daysUntilExpiration <= 7); // Expire dans 7 jours ou moins
+            } else {
+                builder.daysUntilExpiration(0L)
+                    .isExpiringSoon(false);
+            }
+        } else {
+            builder.isExpired(false)
+                .isExpiringSoon(false);
+        }
+
+        return builder.build();
+    }
+
 
     // ==================== MÉTHODES PRIVÉES ====================
 
