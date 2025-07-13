@@ -6,15 +6,20 @@ import inc.yowyob.rental_api.driver.dto.UpdateDriverDto;
 import inc.yowyob.rental_api.driver.entities.Driver;
 import inc.yowyob.rental_api.driver.mapper.DriverMapper;
 import inc.yowyob.rental_api.driver.repository.DriverRepository;
-import inc.yowyob.rental_api.security.util.SecurityUtils;
+// import inc.yowyob.rental_api.security.util.SecurityUtils;
 import inc.yowyob.rental_api.user.entities.User;
 import inc.yowyob.rental_api.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Period;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -55,20 +60,29 @@ public class DriverService {
                 .driverId(UUID.randomUUID())
                 .userId(createDto.getUserId())
                 .organizationId(createDto.getOrganizationId())
-                .age(createDto.getAge())
+                .agencyId(createDto.getAgencyId())
+                .dateOfBirth(createDto.getDateOfBirth())
                 .licenseNumber(createDto.getLicenseNumber())
                 .licenseType(createDto.getLicenseType())
-                .idCardUrl(createDto.getIdCardUrl())
-                .driverLicenseUrl(createDto.getDriverLicenseUrl())
+                .licenseExpiry(createDto.getLicenseExpiry())
+                .experience(createDto.getExperience())
+                .registrationId(createDto.getRegistrationId())
+                .cni(createDto.getCni())
+                .position(createDto.getPosition())
+                .department(createDto.getDepartment())
+                .staffStatus(createDto.getStaffStatus())
+                .hourlyRate(createDto.getHourlyRate())
+                .workingHours(createDto.getWorkingHours())
+                .hireDate(createDto.getHireDate())
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
-                .statusUpdatedBy(createdBy) // L'initiateur du statut
                 .build();
+        
         
         Driver savedDriver = driverRepository.save(driver);
         log.info("Driver created successfully with ID {}", savedDriver.getDriverId());
 
-        return driverMapper.toDto(savedDriver, user);
+        return buildFullDriverDto(savedDriver, user);
     }
 
     /**
@@ -84,39 +98,84 @@ public class DriverService {
         User user = userRepository.findById(driver.getUserId())
                 .orElseThrow(() -> new NoSuchElementException("Associated user not found for driver ID: " + driverId));
         
-        return driverMapper.toDto(driver, user);
+        return buildFullDriverDto(driver, user);
     }
-
     /**
      * Récupère tous les chauffeurs d'une organisation de manière performante.
      * @param organizationId L'ID de l'organisation.
      * @return Une liste de DTOs de chauffeurs.
      */
-    public List<DriverDto> getAllDriversByOrganization(UUID organizationId) {
-        log.info("Fetching all drivers for organization {}", organizationId);
+     public Page<DriverDto> getAllDriversByOrganization(UUID organizationId, Pageable pageable) {
+        log.info("Fetching a paginated list of drivers for organization {}", organizationId);
 
-        List<Driver> drivers = driverRepository.findByOrganizationId(organizationId);
-        if (drivers.isEmpty()) {
-            return List.of();
+        // 1. Récupérer la PAGE de Driver depuis le repository.
+        //    C'est ici que l'appel est corrigé : on passe le Pageable.
+        Page<Driver> driverPage = driverRepository.findByOrganizationId(organizationId, pageable);
+
+        // 2. Extraire la liste des chauffeurs pour la page ACTUELLE.
+        List<Driver> driversOnPage = driverPage.getContent();
+
+        if (driversOnPage.isEmpty()) {
+            return Page.empty(pageable); // Retourne une page vide avec les bonnes informations.
         }
 
-        List<UUID> userIds = drivers.stream().map(Driver::getUserId).distinct().toList();
+        // 3. Collecter les IDs des utilisateurs (uniquement pour la page actuelle).
+        List<UUID> userIds = driversOnPage.stream()
+                .map(Driver::getUserId)
+                .distinct()
+                .toList();
+
+        // 4. Récupérer tous les utilisateurs nécessaires en UNE SEULE requête.
+        Map<UUID, User> userMap = userRepository.findAllById(userIds).stream()
+                .collect(Collectors.toMap(User::getId, Function.identity()));
+
+        // 5. Utiliser la méthode `map` de l'objet Page pour transformer Page<Driver> en Page<DriverDto>.
+        //    Cette méthode préserve toutes les informations de pagination.
+        return driverPage.map(driver -> {
+            User user = userMap.get(driver.getUserId());
+            if (user == null) {
+                log.warn("Data integrity issue: User not found for driver {}, skipping.", driver.getDriverId());
+                return null; // Ce cas devrait être rare si les données sont cohérentes.
+            }
+            return buildFullDriverDto(driver, user);
+        });
+    }
+
+     /**
+     * Récupère une page de chauffeurs pour une AGENCE spécifique.
+     */
+    public Page<DriverDto> getAllDriversByAgency(UUID agencyId, Pageable pageable) {
+        log.info("Fetching a paginated list of drivers for agency {}", agencyId);
+        Page<Driver> driverPage = driverRepository.findByAgencyId(agencyId, pageable);
+        // On réutilise la même logique de mapping
+        return mapDriverPageToDtoPage(driverPage, pageable);
+    }
+
+    private Page<DriverDto> mapDriverPageToDtoPage(Page<Driver> driverPage, Pageable pageable) {
+        List<Driver> driversOnPage = driverPage.getContent();
+
+        if (driversOnPage.isEmpty()) {
+            return Page.empty(pageable);
+        }
+
+        List<UUID> userIds = driversOnPage.stream()
+                .map(Driver::getUserId)
+                .distinct()
+                .toList();
 
         Map<UUID, User> userMap = userRepository.findAllById(userIds).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
 
-        return drivers.stream()
-                .map(driver -> {
-                    User user = userMap.get(driver.getUserId());
-                    if (user == null) {
-                        log.warn("User not found for driver {}, skipping.", driver.getDriverId());
-                        return null;
-                    }
-                    return driverMapper.toDto(driver, user);
-                })
-                .filter(java.util.Objects::nonNull)
-                .toList();
+        return driverPage.map(driver -> {
+            User user = userMap.get(driver.getUserId());
+            if (user == null) {
+                log.warn("Data integrity issue: User not found for driver {}, skipping.", driver.getDriverId());
+                return null;
+            }
+            return buildFullDriverDto(driver, user);
+        });
     }
+
 
     /**
      * Met à jour les informations d'un chauffeur existant.
@@ -129,39 +188,63 @@ public class DriverService {
     public DriverDto updateDriver(UUID driverId, UpdateDriverDto updateDto, UUID updatedBy) {
         log.info("Updating driver {} by user {}", driverId, updatedBy);
 
+        // 1. Récupérer l'entité Driver existante
         Driver driver = driverRepository.findById(driverId)
                 .orElseThrow(() -> new NoSuchElementException("Driver not found with ID: " + driverId));
 
-        // Appliquer les mises à jour partielles
-        if (updateDto.getAge() != null) driver.setAge(updateDto.getAge());
-        if (updateDto.getLicenseNumber() != null) driver.setLicenseNumber(updateDto.getLicenseNumber());
-        if (updateDto.getLicenseType() != null) driver.setLicenseType(updateDto.getLicenseType());
-        if (updateDto.getLocation() != null) driver.setLocation(updateDto.getLocation());
-        if (updateDto.getIdCardUrl() != null) driver.setIdCardUrl(updateDto.getIdCardUrl());
-        if (updateDto.getDriverLicenseUrl() != null) driver.setDriverLicenseUrl(updateDto.getDriverLicenseUrl());
-        if (updateDto.getAssignedVehicleIds() != null) driver.setAssignedVehicleIds(updateDto.getAssignedVehicleIds());
-        if (updateDto.getAvailable() != null) driver.setAvailable(updateDto.getAvailable());
-        if (updateDto.getRating() != null) driver.setRating(updateDto.getRating());
-        if (updateDto.getInsuranceProvider() != null) driver.setInsuranceProvider(updateDto.getInsuranceProvider());
-        if (updateDto.getInsurancePolicy() != null) driver.setInsurancePolicy(updateDto.getInsurancePolicy());
-        
-        if (updateDto.getStatus() != null && updateDto.getStatus() != driver.getStatus()) {
+        // 2. Appliquer les mises à jour partielles
+        if (updateDto.getDateOfBirth() != null) {
+            driver.setDateOfBirth(updateDto.getDateOfBirth());
+        }
+        if (updateDto.getLicenseNumber() != null) {
+            driver.setLicenseNumber(updateDto.getLicenseNumber());
+        }
+        if (updateDto.getLicenseType() != null) {
+            driver.setLicenseType(updateDto.getLicenseType());
+        }
+        if (updateDto.getLicenseExpiry() != null) {
+            driver.setLicenseExpiry(updateDto.getLicenseExpiry());
+        }
+        if (updateDto.getExperience() != null) {
+            driver.setExperience(updateDto.getExperience());
+        }
+        if (updateDto.getPosition() != null) {
+            driver.setPosition(updateDto.getPosition());
+        }
+        if (updateDto.getDepartment() != null) {
+            driver.setDepartment(updateDto.getDepartment());
+        }
+        if (updateDto.getStaffStatus() != null) {
+            driver.setStaffStatus(updateDto.getStaffStatus());
+        }
+        if (updateDto.getHourlyRate() != null) {
+            driver.setHourlyRate(updateDto.getHourlyRate());
+        }
+        if (updateDto.getWorkingHours() != null) {
+            driver.setWorkingHours(updateDto.getWorkingHours());
+        }
+        if (updateDto.getStatus() != null) {
             driver.setStatus(updateDto.getStatus());
-            driver.setStatusUpdatedAt(LocalDateTime.now());
-            driver.setStatusUpdatedBy(updatedBy);
+        }
+        if (updateDto.getRating() != null) {
+            driver.setRating(updateDto.getRating());
         }
 
+        // 3. Mettre à jour la date de dernière modification
         driver.setUpdatedAt(LocalDateTime.now());
+        // Vous pourriez aussi ajouter un champ `updatedBy` à l'entité Driver si nécessaire
 
+        // 4. Sauvegarder l'entité mise à jour
         Driver updatedDriver = driverRepository.save(driver);
         log.info("Driver {} updated successfully.", driverId);
 
+        // 5. Récupérer l'utilisateur associé pour construire le DTO complet
         User user = userRepository.findById(driver.getUserId())
-            .orElseThrow(() -> new NoSuchElementException("Associated user not found for driver ID: " + driverId));
-
-        return driverMapper.toDto(updatedDriver, user);
+                .orElseThrow(() -> new IllegalStateException("Associated user not found for an existing driver. Data integrity issue for driver ID: " + driverId));
+        
+        return buildFullDriverDto(updatedDriver, user);
     }
-    
+
     /**
      * Supprime un chauffeur.
      * @param driverId L'ID du chauffeur à supprimer.
@@ -179,5 +262,17 @@ public class DriverService {
     public List<DriverDto> getAllDrivers() {
         // TODO Auto-generated method stub
         throw new UnsupportedOperationException("Unimplemented method 'getAllDrivers'");
+    }
+
+    // Méthode privée pour centraliser la construction du DTO complet
+    private DriverDto buildFullDriverDto(Driver driver, User user) {
+        DriverDto dto = driverMapper.toDto(driver, user);
+        
+        // Calculer et ajouter l'âge
+        if (driver.getDateOfBirth() != null) {
+            dto.setAge(Period.between(driver.getDateOfBirth(), LocalDate.now()).getYears());
+        }
+        
+        return dto;
     }
 }
