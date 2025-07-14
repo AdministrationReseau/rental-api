@@ -15,11 +15,11 @@ public class RestExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(NoSuchElementException.class)
     protected ResponseEntity<ApiResponse<Object>> handleNoSuchElementException(NoSuchElementException ex) {
-        return ApiResponseUtil.error(HttpStatus.NOT_FOUND, ex.getMessage());
+        return ApiResponseUtil.error(ex.getMessage(), 404);
     }
 
     @ExceptionHandler(IllegalStateException.class)
     protected ResponseEntity<ApiResponse<Object>> handleIllegalStateException(IllegalStateException ex) {
-        return ApiResponseUtil.error(HttpStatus.CONFLICT, ex.getMessage());
+        return ApiResponseUtil.error(ex.getMessage(), 409);
     }
 }

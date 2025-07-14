@@ -26,12 +26,14 @@ import java.util.UUID;
 @Table("drivers")
 public class Driver {
 
-    @PrimaryKey
+    // @PrimaryKey
+    @PrimaryKeyColumn(name = "driver_id", ordinal = 1, type = PrimaryKeyType.CLUSTERED)
     private UUID driverId;
 
     @NotNull(message = "User ID is required")
     private UUID userId;
     
+    @PrimaryKeyColumn(name = "organization_id", ordinal = 0, type = PrimaryKeyType.PARTITIONED)
     @NotNull(message = "Organization ID is required")
     private UUID organizationId;
 

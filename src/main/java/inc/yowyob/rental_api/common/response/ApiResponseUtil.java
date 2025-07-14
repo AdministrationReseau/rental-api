@@ -150,15 +150,15 @@ public class ApiResponseUtil {
     /**
      * Crée une réponse d'erreur interne (500)
      */
-    public static <T> ResponseEntity<ApiResponse<T>> error(HttpStatus notFound, String statusCode) {
+    public static <T> ResponseEntity<ApiResponse<T>> error(String message, int statusCode) {
         ApiResponse<T> response = ApiResponse.<T>builder()
             .success(false)
-            .message(notFound)
+            .message(message)
             .statusCode(statusCode)
             .timestamp(java.time.LocalDateTime.now())
             .build();
 
-        return ResponseEntity.status(string).body(response);
+        return ResponseEntity.status(statusCode).body(response);
     }
 
     /**

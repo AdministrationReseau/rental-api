@@ -260,7 +260,7 @@ public class DriverService {
         log.info("Driver with ID {} deleted successfully", driverId);
     }
 
-    public List<DriverDto> getAllDrivers() {
+    public Slice<DriverDto> getAllDrivers(Pageable pageable) {
         // TODO Auto-generated method stub
         throw new UnsupportedOperationException("Unimplemented method 'getAllDrivers'");
     }

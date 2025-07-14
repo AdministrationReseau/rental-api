@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -50,8 +51,17 @@ public class DriverController {
     return ApiResponseUtil.created(created, "Driver created successfully");
 }
    
+    // CORRECTION : Implémentation du corps de la méthode qui était manquante
+    @Operation(summary = "Get all drivers (paginated - for super admin)")
+    @GetMapping
+    @PreAuthorize("hasAuthority('SYSTEM_ADMIN')") // Uniquement pour les super admins pour éviter de charger tous les chauffeurs
+    public ResponseEntity<ApiResponse<Slice<DriverDto>>> getAllDrivers(Pageable pageable) {
+        log.info("GET /drivers - Retrieving all drivers (paginated)");
+        Slice<DriverDto> driversSlice = driverService.getAllDrivers(pageable);
+        return ApiResponseUtil.success(driversSlice, "All drivers retrieved successfully");
+    }
     
-    @Operation(summary = "Get all drivers")
+    @Operation(summary = "Get all drivers for a specific organization")
      /**
      * Récupère la liste paginée des chauffeurs pour une organisation donnée.
      * L'ID de l'organisation est passé en paramètre de requête.
@@ -61,8 +71,9 @@ public class DriverController {
      * @param pageable Objet de pagination fourni par Spring.
      * @return Une réponse avec une Page de DTOs de chauffeurs.
      */
-    @GetMapping
-    public ResponseEntity<ApiResponse<Slice<DriverDto>>> getAllDrivers(
+     @GetMapping("/organization/{organizationId}")
+    // @PreAuthorize("hasAuthority('DRIVER_READ')")
+    public ResponseEntity<ApiResponse<Slice<DriverDto>>> getAllDriversByOrganization(
             @RequestParam UUID organizationId,
             Pageable pageable) {
         log.info("Requête GET pour lister les chauffeurs de l'organisation {} avec la pagination {}", organizationId, pageable);
@@ -105,15 +116,6 @@ public class DriverController {
     }
 
     
-    @Operation(summary = "Get a driver by Organization")
-    @GetMapping
-    public ResponseEntity<ApiResponse<Slice<DriverDto>>> getAllDriversByOrganization(
-            @RequestParam UUID organizationId,
-            Pageable pageable) {
-        log.info("Requête GET pour lister les chauffeurs de l'organisation {}", organizationId);
-        Slice<DriverDto> driversSlice = driverService.getAllDriversByOrganization(organizationId, pageable);
-        return ApiResponseUtil.success(driversSlice, "Drivers retrieved successfully.");
-    }
 
     @Operation(summary = "Update a driver")
     /**

@@ -37,13 +37,13 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder(12);
     }
 
-    @Bean
-    public DaoAuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
-        authProvider.setUserDetailsService(userDetailsService);
-        authProvider.setPasswordEncoder(passwordEncoder());
-        return authProvider;
-    }
+    // @Bean
+    // public DaoAuthenticationProvider authenticationProvider() {
+    //     DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
+    //     authProvider.setUserDetailsService(userDetailsService);
+    //     authProvider.setPasswordEncoder(passwordEncoder());
+    //     return authProvider;
+    // }
 
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
@@ -121,6 +121,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/subscription/plans").permitAll()
                 .requestMatchers("/api/v1/subscription/plans/trial").permitAll()
                 .requestMatchers("/api/v1/subscription/plans/with-*").permitAll()
+                .requestMatchers("/api/v1/drivers/**").permitAll()
 
                 // Documentation API
                 .requestMatchers(
@@ -139,7 +140,7 @@ public class SecurityConfig {
             )
 
             // Configuration du provider d'authentification
-            .authenticationProvider(authenticationProvider())
+            // .authenticationProvider(authenticationProvider())
 
             // Ajouter le filtre JWT avant le filtre d'authentification standard
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
