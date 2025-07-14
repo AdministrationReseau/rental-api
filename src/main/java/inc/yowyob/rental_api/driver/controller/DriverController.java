@@ -8,7 +8,6 @@ import inc.yowyob.rental_api.driver.dto.UpdateDriverDto;
 import inc.yowyob.rental_api.driver.service.DriverService;
 import inc.yowyob.rental_api.security.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.responses.ApiResponses;
 // import io.swagger.v3.oas.annotations.responses.ApiResponses;
 
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,13 +15,11 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.UUID;
 
 @Slf4j
@@ -65,13 +62,14 @@ public class DriverController {
      * @return Une réponse avec une Page de DTOs de chauffeurs.
      */
     @GetMapping
-    public ResponseEntity<ApiResponse<Page<DriverDto>>> getAllDrivers(
+    public ResponseEntity<ApiResponse<Slice<DriverDto>>> getAllDrivers(
             @RequestParam UUID organizationId,
             Pageable pageable) {
         log.info("Requête GET pour lister les chauffeurs de l'organisation {} avec la pagination {}", organizationId, pageable);
         
-        Page<DriverDto> driversPage = driverService.getAllDriversByOrganization(organizationId, pageable);
-        return ApiResponseUtil.success(driversPage, "Drivers retrieved successfully.");
+        Slice<DriverDto> driversSlice = driverService.getAllDriversByOrganization(organizationId, pageable);
+     
+        return ApiResponseUtil.success(driversSlice, "Drivers retrieved successfully.");
     }
 
     @Operation(summary = "Get a driver by ID")
@@ -98,18 +96,23 @@ public class DriverController {
      */
     @GetMapping("/by-agency/{agencyId}")
     // @PreAuthorize("hasAuthority('DRIVER_READ')") // Pensez à sécuriser l'endpoint
-    public ResponseEntity<ApiResponse<Page<DriverDto>>> getAllDriversByAgency(
+    public ResponseEntity<ApiResponse<Slice<DriverDto>>> getAllDriversByAgency(
             @PathVariable UUID agencyId,
             Pageable pageable) {
-        
-        // SÉCURITÉ IMPORTANTE :
-        // En conditions réelles, vous devriez vérifier que l'utilisateur authentifié a le droit
-        // de voir les informations de cette agence (par ex. en vérifiant qu'elle
-        // appartient bien à son organisation).
-
         log.info("Requête GET pour lister les chauffeurs de l'agence {}", agencyId);
-        Page<DriverDto> driversPage = driverService.getAllDriversByAgency(agencyId, pageable);
-        return ApiResponseUtil.success(driversPage, "Drivers retrieved successfully.");
+        Slice<DriverDto> driversSlice = driverService.getAllDriversByAgency(agencyId, pageable);
+        return ApiResponseUtil.success(driversSlice, "Drivers retrieved successfully.");
+    }
+
+    
+    @Operation(summary = "Get a driver by Organization")
+    @GetMapping
+    public ResponseEntity<ApiResponse<Slice<DriverDto>>> getAllDriversByOrganization(
+            @RequestParam UUID organizationId,
+            Pageable pageable) {
+        log.info("Requête GET pour lister les chauffeurs de l'organisation {}", organizationId);
+        Slice<DriverDto> driversSlice = driverService.getAllDriversByOrganization(organizationId, pageable);
+        return ApiResponseUtil.success(driversSlice, "Drivers retrieved successfully.");
     }
 
     @Operation(summary = "Update a driver")

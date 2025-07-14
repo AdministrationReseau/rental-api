@@ -1,5 +1,6 @@
 package inc.yowyob.rental_api.driver.service;
 
+import java.util.Collections;
 import inc.yowyob.rental_api.driver.dto.CreateDriverDto;
 import inc.yowyob.rental_api.driver.dto.DriverDto;
 import inc.yowyob.rental_api.driver.dto.UpdateDriverDto;
@@ -12,8 +13,9 @@ import inc.yowyob.rental_api.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.SliceImpl;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -105,22 +107,23 @@ public class DriverService {
      * @param organizationId L'ID de l'organisation.
      * @return Une liste de DTOs de chauffeurs.
      */
-     public Page<DriverDto> getAllDriversByOrganization(UUID organizationId, Pageable pageable) {
+     public Slice<DriverDto> getAllDriversByOrganization(UUID organizationId, Pageable pageable) {
         log.info("Fetching a paginated list of drivers for organization {}", organizationId);
 
         // 1. Récupérer la PAGE de Driver depuis le repository.
         //    C'est ici que l'appel est corrigé : on passe le Pageable.
-        Page<Driver> driverPage = driverRepository.findByOrganizationId(organizationId, pageable);
+        Slice<Driver> driverSlice = driverRepository.findByOrganizationId(organizationId, pageable);
 
         // 2. Extraire la liste des chauffeurs pour la page ACTUELLE.
-        List<Driver> driversOnPage = driverPage.getContent();
+        List<Driver> driversOnSlice = driverSlice.getContent();
 
-        if (driversOnPage.isEmpty()) {
-            return Page.empty(pageable); // Retourne une page vide avec les bonnes informations.
+        if (driversOnSlice.isEmpty()) {
+            // On retourne une nouvelle implémentation de Slice avec une liste vide.
+            return new SliceImpl<>(Collections.emptyList(), pageable, false);
         }
 
         // 3. Collecter les IDs des utilisateurs (uniquement pour la page actuelle).
-        List<UUID> userIds = driversOnPage.stream()
+        List<UUID> userIds = driversOnSlice.stream()
                 .map(Driver::getUserId)
                 .distinct()
                 .toList();
@@ -131,7 +134,7 @@ public class DriverService {
 
         // 5. Utiliser la méthode `map` de l'objet Page pour transformer Page<Driver> en Page<DriverDto>.
         //    Cette méthode préserve toutes les informations de pagination.
-        return driverPage.map(driver -> {
+        return driverSlice.map(driver -> {
             User user = userMap.get(driver.getUserId());
             if (user == null) {
                 log.warn("Data integrity issue: User not found for driver {}, skipping.", driver.getDriverId());
@@ -144,36 +147,34 @@ public class DriverService {
      /**
      * Récupère une page de chauffeurs pour une AGENCE spécifique.
      */
-    public Page<DriverDto> getAllDriversByAgency(UUID agencyId, Pageable pageable) {
+    public Slice<DriverDto> getAllDriversByAgency(UUID agencyId, Pageable pageable) {
         log.info("Fetching a paginated list of drivers for agency {}", agencyId);
-        Page<Driver> driverPage = driverRepository.findByAgencyId(agencyId, pageable);
+        Slice<Driver> driverSlice = driverRepository.findByAgencyId(agencyId, pageable);
         // On réutilise la même logique de mapping
-        return mapDriverPageToDtoPage(driverPage, pageable);
+        return mapDriverSliceToDtoSlice(driverSlice, pageable);
     }
 
-    private Page<DriverDto> mapDriverPageToDtoPage(Page<Driver> driverPage, Pageable pageable) {
-        List<Driver> driversOnPage = driverPage.getContent();
+    private Slice<DriverDto> mapDriverSliceToDtoSlice(Slice<Driver> driverSlice, Pageable pageable) {
+        List<Driver> driversOnSlice = driverSlice.getContent();
 
-        if (driversOnPage.isEmpty()) {
-            return Page.empty(pageable);
+        if (driversOnSlice.isEmpty()) {
+            // On retourne une nouvelle implémentation de Slice avec une liste vide.
+            return new SliceImpl<>(Collections.emptyList(), pageable, false);
         }
 
-        List<UUID> userIds = driversOnPage.stream()
-                .map(Driver::getUserId)
-                .distinct()
-                .toList();
-
+        List<UUID> userIds = driversOnSlice.stream().map(Driver::getUserId).distinct().toList();
         Map<UUID, User> userMap = userRepository.findAllById(userIds).stream()
                 .collect(Collectors.toMap(User::getId, Function.identity()));
 
-        return driverPage.map(driver -> {
+        // On mappe la liste de DTOs
+        List<DriverDto> dtoList = driversOnSlice.stream().map(driver -> {
             User user = userMap.get(driver.getUserId());
-            if (user == null) {
-                log.warn("Data integrity issue: User not found for driver {}, skipping.", driver.getDriverId());
-                return null;
-            }
+            if (user == null) return null;
             return buildFullDriverDto(driver, user);
-        });
+        }).collect(Collectors.toList());
+
+        // On reconstruit un Slice<DriverDto> avec la liste mappée et les infos du Slice original
+        return new SliceImpl<>(dtoList, pageable, driverSlice.hasNext());
     }
 
 

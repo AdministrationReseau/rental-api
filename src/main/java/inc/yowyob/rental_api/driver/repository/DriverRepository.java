@@ -3,8 +3,8 @@ package inc.yowyob.rental_api.driver.repository;
 import inc.yowyob.rental_api.driver.enums.DriverStatus;
 import org.springframework.data.cassandra.repository.CassandraRepository;
 import org.springframework.data.cassandra.repository.Query;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.stereotype.Repository;
 
 import inc.yowyob.rental_api.driver.entities.Driver;
@@ -47,7 +47,7 @@ public interface DriverRepository extends CassandraRepository<Driver, UUID> {
     @Query("SELECT * FROM drivers WHERE vehicle_assigned CONTAINS ?0 ALLOW FILTERING")
     List<Driver> findByVehicleAssigned(UUID vehicleId);
 
-    Page<Driver> findByOrganizationId(UUID organizationId, Pageable pageable);
+    Slice<Driver> findByOrganizationId(UUID organizationId, Pageable pageable);
     // List<Driver> findByOrganizationId(UUID organizationId, Pageable pageable);
     
     /**
@@ -62,7 +62,7 @@ public interface DriverRepository extends CassandraRepository<Driver, UUID> {
      * Récupère les chauffeurs d'une organisation assignés à un véhicule spécifique.
      * S'appuie sur un index secondaire sur la collection 'assigned_vehicle_ids'.
      */
-    List<Driver> findByOrganizationIdAndAssignedVehicleIdsContains(UUID organizationId, UUID vehicleId);
+    Slice<Driver> findByOrganizationIdAndAssignedVehicleIdsContains(UUID organizationId, UUID vehicleId);
 
     /**
      * Trouve tous les chauffeurs appartenant à une agence spécifique,
@@ -73,5 +73,5 @@ public interface DriverRepository extends CassandraRepository<Driver, UUID> {
      * @param pageable L'objet de pagination.
      * @return Une Page d'entités Driver.
      */
-    Page<Driver> findByAgencyId(UUID agencyId, Pageable pageable);
+    Slice<Driver> findByAgencyId(UUID agencyId, Pageable pageable);
 }
