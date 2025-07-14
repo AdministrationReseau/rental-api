@@ -6,10 +6,8 @@ FROM maven:3.9.6-eclipse-temurin-21-alpine AS build
 WORKDIR /app
 
 # Copier les fichiers Maven pour la résolution des dépendances
-COPY pom.xml .
+COPY pom.xml mvnw mvnw.cmd ./
 COPY .mvn .mvn
-COPY mvnw .
-COPY mvnw.cmd .
 
 # Rendre mvnw exécutable
 RUN chmod +x mvnw
@@ -21,7 +19,7 @@ RUN ./mvnw dependency:go-offline -B
 COPY src src
 
 # Construire l'application (skip tests pour build plus rapide)
-RUN ./mvnw clean package -DskipTests
+RUN ./mvnw --no-transfer-progress clean package -DskipTests
 
 # Runtime stage
 FROM eclipse-temurin:21-jre-alpine

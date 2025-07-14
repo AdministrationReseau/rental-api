@@ -15,6 +15,11 @@ public enum Permission {
     VEHICLE_MANAGE_IMAGES("vehicle_manage_images", "Gérer les images des véhicules", "VEHICLE"),
     VEHICLE_CHANGE_STATUS("vehicle_change_status", "Changer le statut des véhicules", "VEHICLE"),
 
+    // === TARIFF PERMISSIONS ===
+    TARIFF_READ("tariff_read", "Read tariff information", "TARIFF"),
+    TARIFF_WRITE("tariff_write", "Create and update tariffs", "TARIFF"),
+    TARIFF_DELETE("tariff_delete", "Delete tariffs", "TARIFF"),
+
     // === PERMISSIONS CHAUFFEURS ===
     DRIVER_READ("driver_read", "Lire les informations des chauffeurs", "DRIVER"),
     DRIVER_WRITE("driver_write", "Créer de nouveaux chauffeurs", "DRIVER"),

@@ -2,12 +2,16 @@ version: '3.8'
 
 services:
     scylla:
-        image: scylladb/scylla
+        image: scylladb/scylla:5.4.1 # Using a specific version is good practice
         container_name: some-scylla
         ports:
             - "9042:9042"
+        # FIX: Added broadcast address for stable local connections
+        command: --smp 1 --memory 1G --broadcast-rpc-address 127.0.0.1
         networks:
-            - scylla-net
+            - rental-net
+        volumes:
+            - scylla_data:/var/lib/scylla # Persist data
 
     rental-api:
         build: .
@@ -17,25 +21,25 @@ services:
         depends_on:
             - scylla
         networks:
-            - scylla-net
+            - rental-net
         environment:
             - server.servlet.context-path=/api/v1
             - server.error.include-message=always
             - server.error.include-binding-errors=always
 
-            # config cassandra
-            - SPRING_CASSANDRA_CONTACT_POINTS=scylla
-            - SPRING_CASSANDRA_KEYSPACE_NAME=rental
-            - SPRING_CASSANDRA_USERNAME=cassandra
-            - SPRING_CASSANDRA_PASSWORD=cassandra
-            - SPRING_CASSANDRA_PORT=9045
-            - SPRING_CASSANDRA_LOCAL_DATACENTER=datacenter1
-            - spring.cassandra.schema-action=CREATE_IF_NOT_EXISTS
-            - spring.cassandra.request.timeout=10s
-            - spring.cassandra.connection.connect-timeout=10s
-            - spring.cassandra.connection.init-query-timeout=10s
+            # FIX: Corrected Cassandra properties for Spring Boot 3.x
+            - SPRING_DATA_CASSANDRA_CONTACT_POINTS=scylla
+            - SPRING_DATA_CASSANDRA_KEYSPACE_NAME=rental
+            # - SPRING_DATA_CASSANDRA_USERNAME=cassandra # Default Scylla image has no auth
+            # - SPRING_DATA_CASSANDRA_PASSWORD=cassandra # Default Scylla image has no auth
+            - SPRING_DATA_CASSANDRA_PORT=9042 # Correct port
+            - SPRING_DATA_CASSANDRA_LOCAL_DATACENTER=datacenter1
+            - spring.data.cassandra.schema-action=CREATE_IF_NOT_EXISTS
+            - spring.data.cassandra.request.timeout=10s
+            - spring.data.cassandra.connection.connect-timeout=10s
+            - spring.data.cassandra.connection.init-query-timeout=10s
 
-            # config cors
+            # config cors (these are also in application.properties, env vars will override)
             - app.cors.allowed-origins=http://localhost:3000,http://localhost:8080,http://localhost:4200
             - app.cors.allowed-methods=GET,POST,PUT,DELETE,OPTIONS,PATCH
             - app.cors.allowed-headers=*
@@ -47,24 +51,15 @@ services:
             - app.jwt.refresh-expiration=604800000
 
             # config swagger
-            - springdoc.api-docs.enabled=true
             - springdoc.api-docs.path=/v3/api-docs
-            - springdoc.swagger-ui.enabled=true
             - springdoc.swagger-ui.path=/swagger-ui.html
-            - springdoc.swagger-ui.operations-sorter=method
-            - springdoc.swagger-ui.tags-sorter=alpha
-            - springdoc.swagger-ui.display-request-duration=true
-            - springdoc.swagger-ui.show-extensions=true
-            - springdoc.swagger-ui.show-common-extensions=true
 
             # config file
-            - spring.servlet.multipart.enabled=true
-            - spring.servlet.multipart.max-file-size=10MB
-            - spring.servlet.multipart.max-request-size=10MB
-            - app.file.upload-dir=./uploads
-            - app.file.max-file-size=10485760
-            - app.file.allowed-extensions=jpg,jpeg,png,pdf,doc,docx
+            - app.file.upload-dir=/app/uploads # Use the path inside the container
 
 networks:
-    scylla-net:
+    rental-net:
         driver: bridge
+
+volumes:
+    scylla_data:

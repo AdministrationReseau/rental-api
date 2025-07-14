@@ -98,50 +98,29 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            // Configuration CORS
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-
-            // Désactiver CSRF pour API REST
             .csrf(AbstractHttpConfigurer::disable)
-
-            // Configuration des sessions (stateless pour JWT)
-            .sessionManagement(session -> session
-                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-            )
-
-            // Configuration des autorisations
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authz -> authz
-                // Routes publiques - Authentification
-                .requestMatchers("/api/v1/auth/**").permitAll()
+                // Public routes for authentication and onboarding
+                .requestMatchers("/api/v1/auth/**", "/api/v1/onboarding/**").permitAll()
+                
+                // Public routes for plan viewing
+                .requestMatchers("/api/v1/subscription/plans/**").permitAll()
+                
+                // ADDED: Public access to vehicle images
+                .requestMatchers("/api/v1/vehicles/images/**").permitAll()
 
-                // Routes publiques - Onboarding
-                .requestMatchers("/api/v1/onboarding/**").permitAll()
+                // API Documentation
+                .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
 
-                // Routes publiques - Forfaits (consultation uniquement)
-                .requestMatchers("/api/v1/subscription/plans").permitAll()
-                .requestMatchers("/api/v1/subscription/plans/trial").permitAll()
-                .requestMatchers("/api/v1/subscription/plans/with-*").permitAll()
-
-                // Documentation API
-                .requestMatchers(
-                    "/v3/api-docs/**",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/swagger-resources/**",
-                    "/webjars/**"
-                ).permitAll()
-
-                // Health checks et actuator (si activé)
+                // Health checks for Docker
                 .requestMatchers("/actuator/health").permitAll()
 
-                // Toutes les autres routes nécessitent une authentification
+                // All other requests require authentication
                 .anyRequest().authenticated()
             )
-
-            // Configuration du provider d'authentification
             .authenticationProvider(authenticationProvider())
-
-            // Ajouter le filtre JWT avant le filtre d'authentification standard
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
